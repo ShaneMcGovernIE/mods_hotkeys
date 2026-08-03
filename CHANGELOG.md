@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.7] - 2026-08-03
+
+- Hotkeys are now split into two pages: OPTIONS -> PC HOTKEYS (keyboard triggers) and OPTIONS -> PAD HOTKEYS (controller triggers). A row's page is fixed by its default trigger, so rebinds never shuffle rows between pages.
+
+## [0.1.6] - 2026-08-03
+
+- Added: the engine's built-in game-speed hotkeys now appear as rebindable rows (SPEED UP / SPEED DOWN) when the running engine has them — the `1` key and the L2/R2 bumpers (upstream `Game:_cycleSpeed`). Old engines without the feature contribute no rows.
+- The `1` key joins the reserved list (the engine consumes it for the speed cycle, so a combo containing it would also change speed).
+- README now carries a quick guide for mod developers: the idioms this mod detects and how to write a hotkey so it shows up.
+
 ## [0.1.5] - 2026-08-03
 
 - Combo separator is now "×" (T×Y, SELECT×A) instead of ASCII "+" — the charmap has no "+" glyph, so it rendered as a blank tile in the menu rows and the capture box.

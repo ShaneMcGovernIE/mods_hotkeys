@@ -1,5 +1,5 @@
 {
-  "summary": "OPTIONS -> MODS HOTKEYS: detects hotkeys other mods listen for and lets you rebind them, multi-button combos included.",
+  "summary": "OPTIONS -> MODS HOTKEYS: detects hotkeys other mods listen for (and the engine's built-in speed bumpers) and lets you rebind them, multi-button combos included.",
   "differences": [
     "Scans enabled mods' sources for key/button/GB-combo triggers with no opt-in required",
     "Multi-piece combos (SELECT + A, TAB + LB) as rebind targets, up to 4 pieces",

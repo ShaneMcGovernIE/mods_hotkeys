@@ -1,7 +1,7 @@
 {
   "id": "mods_hotkeys",
   "name": "Mods Hotkeys",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -13,6 +13,6 @@
   "permissions": [
     "engine_internals"
   ],
-  "description": "OPTIONS -> MODS HOTKEYS: detects the hotkeys other installed mods listen for (keyboard keys, pad buttons, GB-button combos) and lets you rebind them, with multi-button support like SELECT + A or TAB + LB.",
+  "description": "OPTIONS -> PC/PAD HOTKEYS: detects the hotkeys other installed mods listen for (keyboard keys, pad buttons, GB-button combos) and lets you rebind them, with multi-button support like SELECT + A or TAB + LB.",
   "github": "ShaneMcGovernIE/mods_hotkeys"
 }

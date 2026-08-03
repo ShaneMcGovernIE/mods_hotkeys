@@ -198,6 +198,42 @@ local function detectFromFiles(files, modId, modName)
   return out
 end
 
+-- The page a hotkey row belongs to, fixed by its DEFAULT trigger so a
+-- rebind never shuffles rows between pages: any pad piece means the
+-- player drives it from a controller, everything else (keyboard keys
+-- and GB buttons) is the PC page.  The value column always shows the
+-- current trigger wherever the row sits.
+local function hotkeyPage(pieces)
+  for _, p in ipairs(pieces or {}) do
+    if p.kind == "pad" then return "controller" end
+  end
+  return "pc"
+end
+
+-- The engine's built-in game-speed hotkeys (upstream Game:_cycleSpeed:
+-- keyboard 1 cycles faster; the L2/R2 bumpers slow down / speed up).
+-- scanMods never sees them (they are engine code, not mod sources), so
+-- they register explicitly.  Stable ids keep persisted rebinds alive
+-- across boots; the guard means an engine without the feature (older
+-- builds) simply contributes no rows.  Rebinding works like any mod
+-- row: the new combo re-emits the original trigger (e.g. a rebound
+-- GAME SPEED UP fires rightshoulder through Game.gamepadpressed).
+local function engineHotkeys(game)
+  local G = game or Game
+  if type(G._cycleSpeed) ~= "function" then return {} end
+  return {
+    { id = "engine|builtin|speed:up", modId = "engine", modName = "ENGINE",
+      label = "SPEED UP",
+      pieces = { { kind = "pad", name = "rightshoulder" } } },
+    { id = "engine|builtin|speed:down", modId = "engine", modName = "ENGINE",
+      label = "SPEED DOWN",
+      pieces = { { kind = "pad", name = "leftshoulder" } } },
+    { id = "engine|builtin|speed:up:kb", modId = "engine", modName = "ENGINE",
+      label = "SPEED UP",
+      pieces = { { kind = "key", name = "1" } } },
+  }
+end
+
 -- Read every Lua source a mod ships (entry + top-level files; tests are
 -- not gameplay code and never scanned).
 local function readLuaFiles(fs, path, entry)
@@ -389,12 +425,13 @@ end
 -- --------------------------------------------------------- the screen
 
 -- Keys the engine consumes before Input (Game:keypressed) are not
--- bindable: a combo that fired one would also quicksave, cycle colours or
--- open the mod manager.  Escape stays the capture's cancel key.
+-- bindable: a combo that fired one would also cycle speed or colours,
+-- quicksave or open the mod manager.  Escape stays the capture's
+-- cancel key.
 local RESERVED_KEYS = {
+  ["1"] = true, ["2"] = true, ["3"] = true, ["4"] = true, ["5"] = true,
   ["f1"] = true, ["f2"] = true, ["f5"] = true, ["f10"] = true,
-  ["`"] = true, ["2"] = true, ["3"] = true, ["4"] = true, ["5"] = true,
-  ["-"] = true, ["="] = true, escape = true,
+  ["`"] = true, ["-"] = true, ["="] = true, escape = true,
 }
 
 local function isBindable(kind, name)
@@ -608,22 +645,25 @@ end
 return function(mod)
   local Strings = require("src.core.Strings")
 
-  mod.content.screens:register("ModsHotkeysMenu", { new = function(game)
+  mod.content.screens:register("ModsHotkeysMenu", { new = function(game, page)
     local rows = {}
     local ids = {}
     for id in pairs(state.hotkeys) do ids[#ids + 1] = id end
     table.sort(ids)
     for _, id in ipairs(ids) do
       local hk = state.hotkeys[id]
-      rows[#rows + 1] = {
-        id = id,
-        label = Strings(hk.modName),
-        value = function() return rowValue(id) end,
-        hotkey = hk,
-      }
+      if hotkeyPage(hk.pieces) == page then
+        rows[#rows + 1] = {
+          id = id,
+          label = hk.label or Strings(hk.modName),
+          value = function() return rowValue(id) end,
+          hotkey = hk,
+        }
+      end
     end
     return setmetatable({
       game = game,
+      page = page,
       rows = rows,
       index = 1, scroll = 0,
     }, ModsHotkeysMenu)
@@ -631,16 +671,31 @@ return function(mod)
 
   mod.hooks:wrap("ui.options.rows", function(next, game, rows)
     rows = next(game, rows)
+    local function pageCount(page)
+      local n = 0
+      for _, hk in pairs(state.hotkeys) do
+        if hotkeyPage(hk.pieces) == page then n = n + 1 end
+      end
+      return n
+    end
     rows[#rows + 1] = {
-      id = "modsHotkeys",
-      label = Strings("MODS HOTKEYS"),
+      id = "modsHotkeysPc",
+      label = Strings("PC HOTKEYS"),
       value = function()
-        local n = 0
-        for _ in pairs(state.hotkeys) do n = n + 1 end
-        return Strings("%d HOTKEYS", n)
+        return Strings("%d HOTKEYS", pageCount("pc"))
       end,
       activate = function(g)
-        require("src.ui.Screens").push(g, "ModsHotkeysMenu")
+        require("src.ui.Screens").push(g, "ModsHotkeysMenu", "pc")
+      end,
+    }
+    rows[#rows + 1] = {
+      id = "modsHotkeysPad",
+      label = Strings("PAD HOTKEYS"),
+      value = function()
+        return Strings("%d HOTKEYS", pageCount("controller"))
+      end,
+      activate = function(g)
+        require("src.ui.Screens").push(g, "ModsHotkeysMenu", "controller")
       end,
     }
     return rows
@@ -652,6 +707,7 @@ return function(mod)
     local detected = scanMods(loader(), MOD_ID)
     state.hotkeys = {}
     for _, hk in ipairs(detected) do state.hotkeys[hk.id] = hk end
+    for _, hk in ipairs(engineHotkeys(Game)) do state.hotkeys[hk.id] = hk end
     applyRebinds()
 
     if Game._modsHotkeysInstalled then return end
@@ -736,6 +792,8 @@ return function(mod)
     parseSource = parseSource,
     detectFromFiles = detectFromFiles,
     scanMods = scanMods,
+    engineHotkeys = engineHotkeys,
+    hotkeyPage = hotkeyPage,
     describe = describe,
     isBindable = isBindable,
     comboState = comboState,

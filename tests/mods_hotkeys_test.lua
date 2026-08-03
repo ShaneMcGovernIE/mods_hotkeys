@@ -22,18 +22,21 @@ T.neq(run.loader.content.screens:get("ModsHotkeysMenu"), nil,
 local Game = require("src.core.Game")
 Game.mods = run.loader
 
-local function findRow()
+local function findRow(id)
   local rows = Runtime.call("ui.options.rows", function(_, r) return r end,
     {}, {})
   for _, row in ipairs(rows) do
-    if row.id == "modsHotkeys" then return row end
+    if row.id == id then return row end
   end
   return nil
 end
 
-local row = findRow()
-T.neq(row, nil, "the MODS HOTKEYS row joins the options menu")
-T.eq(row.label, "MODS HOTKEYS", "row label")
+local rowPc = findRow("modsHotkeysPc")
+T.neq(rowPc, nil, "the PC HOTKEYS row joins the options menu")
+T.eq(rowPc.label, "PC HOTKEYS", "pc row label")
+local rowPad = findRow("modsHotkeysPad")
+T.neq(rowPad, nil, "the PAD HOTKEYS row joins the options menu")
+T.eq(rowPad.label, "PAD HOTKEYS", "pad row label")
 
 -- ------------------------------------------------ source scanning
 
@@ -212,6 +215,7 @@ T.eq(ex.canonicalFor("select", {}, {}), nil, "nothing maps it -> nil")
 
 T.eq(ex.isBindable("key", "tab"), true, "TAB is bindable")
 T.eq(ex.isBindable("key", "9"), true, "digits other than the engine's are bindable")
+T.eq(ex.isBindable("key", "1"), false, "1 (engine speed cycle) is not bindable")
 T.eq(ex.isBindable("key", "f1"), false, "F1 (quicksave) is not bindable")
 T.eq(ex.isBindable("key", "2"), false, "2 (colour cycle) is not bindable")
 T.eq(ex.isBindable("key", "f10"), false, "F10 (mod manager) is not bindable")
@@ -219,7 +223,6 @@ T.eq(ex.isBindable("key", "escape"), false, "Escape (capture cancel) is not bind
 T.eq(ex.isBindable("pad", "leftshoulder"), true, "pad buttons are bindable")
 
 -- ---------------------------------------------------- scanMods (fake fs)
-
 local fakeFs = {
   read = function(path)
     local files = {
@@ -252,6 +255,83 @@ T.eq(#scanned, 3, "scan skips self and disabled mods")
 T.eq(scanned[1].id, "battle_move_info|main.lua|key:q",
      "sorted: first battle_move_info key hotkey")
 T.eq(scanned[1].modName, "Battle Move Info", "hotkey carries the mod name")
+
+-- ------------------------------------------- engine built-in hotkeys
+
+local stubEngine = { _cycleSpeed = function() end }
+local eng = ex.engineHotkeys(stubEngine)
+T.eq(#eng, 3, "engine with _cycleSpeed yields the three built-in rows")
+local engBy = {}
+for _, hk in ipairs(eng) do engBy[hk.id] = hk end
+local up = engBy["engine|builtin|speed:up"]
+T.neq(up, nil, "speed up row id")
+T.eq(up.pieces[1].kind, "pad", "speed up is a pad row")
+T.eq(up.pieces[1].name, "rightshoulder", "speed up default is R2")
+T.eq(up.label, "SPEED UP", "speed up row label")
+local down = engBy["engine|builtin|speed:down"]
+T.eq(down.pieces[1].name, "leftshoulder", "speed down default is L2")
+local kb = engBy["engine|builtin|speed:up:kb"]
+T.eq(kb.pieces[1].kind, "key", "keyboard speed row is a key")
+T.eq(kb.pieces[1].name, "1", "keyboard speed default is 1")
+T.eq(#ex.engineHotkeys({}), 0, "engine without _cycleSpeed yields no rows")
+T.eq(#ex.engineHotkeys(nil), 0, "headless Game has no built-in speed rows")
+
+-- engine rows fold into rebinds like any detected hotkey
+local engId = "engine|builtin|speed:up"
+ex.state.hotkeys[engId] = engBy[engId]
+ex.setRebinds({ [engId] = { pieces = { { kind = "key", name = "f7" } } } })
+ex.applyRebinds()
+T.eq(ex.currentTrigger(engId), "F7", "engine row rebinds and shows the new trigger")
+T.eq(ex.state.rebinds[engId].original[1].name, "rightshoulder",
+     "engine row keeps its original trigger for emission")
+ex.setRebinds({})
+
+-- ------------------------------------------- page classification
+
+T.eq(ex.hotkeyPage({ { kind = "key", name = "q" } }), "pc",
+     "key trigger is the PC page")
+T.eq(ex.hotkeyPage({ { kind = "gb", name = "select" },
+                     { kind = "gb", name = "a" } }), "pc",
+     "GB-only combo is the PC page")
+T.eq(ex.hotkeyPage({ { kind = "pad", name = "rightshoulder" } }),
+     "controller", "pad trigger is the controller page")
+T.eq(ex.hotkeyPage({ { kind = "key", name = "tab" },
+                     { kind = "pad", name = "leftshoulder" } }),
+     "controller", "mixed key+pad combo is the controller page")
+T.eq(ex.hotkeyPage(nil), "pc", "no pieces -> PC page")
+
+-- the engine rows land on their natural pages
+for _, hk in ipairs(ex.engineHotkeys(stubEngine)) do
+  if hk.pieces[1].kind == "pad" then
+    T.eq(ex.hotkeyPage(hk.pieces), "controller",
+         "engine pad row is the controller page (" .. hk.id .. ")")
+  else
+    T.eq(ex.hotkeyPage(hk.pieces), "pc",
+         "engine key row is the PC page (" .. hk.id .. ")")
+  end
+end
+
+-- the screen factory filters rows by page
+local factory = run.loader.content.screens:get("ModsHotkeysMenu").new
+ex.state.hotkeys = {
+  ["engine|builtin|speed:up"] =
+    { id = "engine|builtin|speed:up", modName = "ENGINE", label = "SPEED UP",
+      pieces = { { kind = "pad", name = "rightshoulder" } } },
+  ["engine|builtin|speed:up:kb"] =
+    { id = "engine|builtin|speed:up:kb", modName = "ENGINE", label = "SPEED UP",
+      pieces = { { kind = "key", name = "1" } } },
+  ["battle_move_info|main.lua|key:q"] =
+    { id = "battle_move_info|main.lua|key:q", modName = "Battle Move Info",
+      pieces = { { kind = "key", name = "q" } } },
+}
+local pcMenu = factory({}, "pc")
+T.eq(#pcMenu.rows, 2, "pc page shows only key rows")
+T.eq(pcMenu.page, "pc", "pc menu carries its page")
+local padMenu = factory({}, "controller")
+T.eq(#padMenu.rows, 1, "controller page shows only pad rows")
+T.eq(padMenu.rows[1].hotkey.id, "engine|builtin|speed:up",
+     "the R2 row lives on the controller page")
+ex.state.hotkeys = {}
 
 -- ---------------------------------------------------- persistence + fold
 
