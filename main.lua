@@ -351,6 +351,15 @@ local function currentTrigger(id)
   return hk and describe(hk.pieces) or "--"
 end
 
+-- Row value for the OptionRows viewport: the value line starts 24px in
+-- and must end before the 160px box edge, so a long 4-piece combo is
+-- capped with a trailing "+" instead of clipping mid-glyph.
+local function rowValue(id)
+  local t = currentTrigger(id)
+  if #t > 15 then t = t:sub(1, 14) .. "+" end
+  return t
+end
+
 -- Fold the persisted rebind map into live combo machines.
 local function applyRebinds()
   local live = {}
@@ -440,14 +449,20 @@ function ModsHotkeysMenu:draw()
                   "CANCEL", #self.rows + 1)
   if self.capture then
     local Font = require("src.render.Font")
-    Font.drawBox(1, 5, 18, 7)
+    -- instructions, full width so no line clips the border
+    Font.drawBox(0, 2, 20, 7)
     love.graphics.setColor(0, 0, 0, 1)
-    Font.draw("PRESS A COMBO", 24, 48)
-    Font.draw("RELEASE TO SET", 24, 60)
-    Font.draw("ESC CANCELS", 24, 72)
-    Font.draw("ENGINE KEYS N/A", 24, 84)
-    local live = describe(self.pending or {})
-    if live ~= "--" then Font.draw(live, 24, 96) end
+    Font.draw("PRESS A COMBO", 24, 24)
+    Font.draw("RELEASE TO SET", 24, 36)
+    Font.draw("ESC CANCELS", 24, 48)
+    Font.draw("ENGINE KEYS N/A", 24, 60)
+    -- the live combo gets its own box, centered
+    Font.drawBox(0, 10, 20, 4)
+    local label = describe(self.pending or {})
+    if label ~= "--" then
+      if #label > 18 then label = label:sub(1, 17) .. "+" end
+      Font.draw(label, math.floor((160 - Font.width(label)) / 2), 88)
+    end
     love.graphics.setColor(1, 1, 1, 1)
   end
 end
@@ -542,7 +557,7 @@ function ModsHotkeysMenu:commitCapture(pieces)
   map[row.hotkey.id] = { pieces = pieces }
   setRebinds(map)
   applyRebinds()
-  row.value = function() return currentTrigger(row.hotkey.id) end
+  row.value = function() return rowValue(row.hotkey.id) end
 end
 
 function ModsHotkeysMenu:resetRow(row)
@@ -551,7 +566,7 @@ function ModsHotkeysMenu:resetRow(row)
     map[row.hotkey.id] = nil
     setRebinds(map)
     applyRebinds()
-    row.value = function() return currentTrigger(row.hotkey.id) end
+    row.value = function() return rowValue(row.hotkey.id) end
   end
 end
 
@@ -562,7 +577,7 @@ function ModsHotkeysMenu:confirmResetAll()
     setRebinds({})
     applyRebinds()
     for _, row in ipairs(self.rows) do
-      row.value = function() return currentTrigger(row.hotkey.id) end
+      row.value = function() return rowValue(row.hotkey.id) end
     end
   end, { defaultNo = true }))
 end
@@ -582,7 +597,7 @@ return function(mod)
       rows[#rows + 1] = {
         id = id,
         label = Strings(hk.modName),
-        value = function() return currentTrigger(id) end,
+        value = function() return rowValue(id) end,
         hotkey = hk,
       }
     end

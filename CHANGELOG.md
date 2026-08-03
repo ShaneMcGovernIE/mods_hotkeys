@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.2] - 2026-08-03
+
+- Capture overlay redesigned: full-width instruction box (no clipped lines) and a separate centered box for the live combo being pressed.
+- Long 4-piece combos are capped with a trailing "+" in the menu rows and the live box instead of clipping mid-glyph.
+
 ## [0.1.1] - 2026-08-03
 
 - Added: configurable GB-button triggers are now detected — a `*BUTTONS` list (DexNav's `DEXNAV_BUTTONS = { "select", "start", "a", "b" }`) polled through a dynamic `wasPressed(helper(game))` call becomes a rebindable hotkey (default = the list's first button).
