@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.3] - 2026-08-03
+
+- Capture overlay is now a full-screen white pass with two boxes, so the options list underneath can never peek through the seams.
+- Removed the "ENGINE KEYS N/A" line; pressing a reserved engine key during capture now flashes "<KEY> NOT BINDABLE" for a moment instead.
+
 ## [0.1.2] - 2026-08-03
 
 - Capture overlay redesigned: full-width instruction box (no clipped lines) and a separate centered box for the live combo being pressed.

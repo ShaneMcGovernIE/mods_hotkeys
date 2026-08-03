@@ -449,19 +449,26 @@ function ModsHotkeysMenu:draw()
                   "CANCEL", #self.rows + 1)
   if self.capture then
     local Font = require("src.render.Font")
-    -- instructions, full width so no line clips the border
-    Font.drawBox(0, 2, 20, 7)
+    -- full-screen white pass first: the capture boxes sit over the
+    -- options list, and without this the underlying rows peek through
+    -- the seams and look like clipped text
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.rectangle("fill", 0, 0, 160, 144)
+    Font.drawBox(0, 2, 20, 5)
     love.graphics.setColor(0, 0, 0, 1)
     Font.draw("PRESS A COMBO", 24, 24)
     Font.draw("RELEASE TO SET", 24, 36)
     Font.draw("ESC CANCELS", 24, 48)
-    Font.draw("ENGINE KEYS N/A", 24, 60)
     -- the live combo gets its own box, centered
-    Font.drawBox(0, 10, 20, 4)
+    Font.drawBox(0, 8, 20, 6)
     local label = describe(self.pending or {})
     if label ~= "--" then
       if #label > 18 then label = label:sub(1, 17) .. "+" end
-      Font.draw(label, math.floor((160 - Font.width(label)) / 2), 88)
+      Font.draw(label, math.floor((160 - Font.width(label)) / 2), 80)
+    end
+    if self.reject and love.timer.getTime() < self.reject["until"] then
+      local msg = self.reject.key .. " NOT BINDABLE"
+      Font.draw(msg, math.floor((160 - Font.width(msg)) / 2), 96)
     end
     love.graphics.setColor(1, 1, 1, 1)
   end
@@ -474,6 +481,7 @@ function ModsHotkeysMenu:beginCapture(row)
   self.capture = row
   self.pending = {}
   self.heldCount = 0
+  self.reject = nil
   state.capturing = true
   self.onKeyPressed = ModsHotkeysMenu.captureKey
   self.onGamepadPressed = ModsHotkeysMenu.capturePad
@@ -487,6 +495,7 @@ function ModsHotkeysMenu:endCapture()
   self.capture = nil
   self.pending = nil
   self.heldCount = nil
+  self.reject = nil
   state.capturing = false
   self.onKeyPressed = nil
   self.onGamepadPressed = nil
@@ -524,7 +533,11 @@ end
 
 function ModsHotkeysMenu:captureKey(key)
   if key == "escape" then return self:endCapture() end
-  if not isBindable("key", key) then return end
+  if not isBindable("key", key) then
+    self.reject = { key = key:upper(),
+                    ["until"] = love.timer.getTime() + 1.2 }
+    return
+  end
   self:addPiece("key", key)
 end
 
