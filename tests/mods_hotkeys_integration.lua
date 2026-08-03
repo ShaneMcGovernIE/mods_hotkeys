@@ -1,0 +1,203 @@
+-- Integration: simulate the whole runtime flow against the real Game
+-- module -- detection over the repo's own mod sources, a persisted
+-- rebind, the game.ready wrap installation, and the key press that must
+-- be translated into the original trigger.
+-- Run: POKEPORT_DATA_DIR=tests/fixture_data luajit mods/mods_hotkeys/tests/mods_hotkeys_integration.lua
+package.path = "./?.lua;./?/init.lua;" .. package.path
+
+local T = require("tests.modkit")
+local Data = require("src.core.Data")
+Data:load()
+
+local run = T.sdk.loadMod("mods/mods_hotkeys", { data = Data })
+T.eq(#run.errors, 0, "loads clean (" .. tostring(run.errors[1]) .. ")")
+local ex = run.loader.exports.mods_hotkeys
+
+-- --------------------------------------------------- stub the engine seam
+
+-- The real Game module table (main.lua requires it); stub the methods the
+-- mod wraps and the loader seam it reads.
+local Game = require("src.core.Game")
+local received = {}
+
+Game.keypressed = function(self, key) received[#received + 1] = { "key", key } end
+Game.keyreleased = function(self, key) received[#received + 1] = { "rel", key } end
+Game.gamepadpressed = function(self, joy, button) received[#received + 1] = { "pad", button } end
+Game.gamepadreleased = function(self, joy, button) received[#received + 1] = { "padrel", button } end
+
+-- loader seam: reuse the real loader; detection runs over the repo's own
+-- mod sources read straight off disk (love.filesystem is absent headless)
+local function repoFs()
+  return {
+    read = function(path)
+      local rel = path:match("^mods/(.+)$")
+      if not rel then return nil end
+      local h = io.open("mods/" .. rel, "rb")
+      if not h then return nil end
+      local text = h:read("*a")
+      h:close()
+      return text
+    end,
+    getDirectoryItems = function(path)
+      local ls = io.popen("ls " .. path .. " 2>/dev/null"):read("*a")
+      local names = {}
+      for f in ls:gmatch("[^\n]+") do
+        local base = f:match("([^/]+)$")
+        if base then names[#names + 1] = base end
+      end
+      return names
+    end,
+  }
+end
+local loader = run.loader
+loader.fs = repoFs()
+loader.mods = loader.mods or {}
+local MANIFESTS = {
+  battle_move_info = { name = "Battle Move Info", entry = "main.lua" },
+  bag_999 = { name = "Bag 999", entry = "main.lua" },
+  game_speed_toggle = { name = "Game Speed Toggle", entry = "main.lua" },
+}
+for id, manifest in pairs(MANIFESTS) do
+  if not loader.mods[id] then
+    loader.mods[id] = { manifest = manifest,
+                        enabled = true, path = "mods/" .. id }
+  end
+end
+Game.mods = loader
+
+-- ---------------------------------------------------------- detection
+
+ex.applyRebinds()
+local found = ex.scanMods(loader, "mods_hotkeys")
+T.eq(#found >= 6, true, "detects the reference mods' hotkeys")
+local qId = "battle_move_info|main.lua|key:q"
+ex.state.hotkeys = {}
+for _, hk in ipairs(found) do ex.state.hotkeys[hk.id] = hk end
+T.neq(ex.state.hotkeys[qId], nil, "battle_move_info Q detected")
+
+-- ---------------------------------------------------- game.ready install
+
+-- emit game.ready exactly like the engine does (Game:load)
+run.loader.events:emit("game.ready", { game = Game })
+T.neq(Game._modsHotkeysInstalled, nil, "wraps installed by game.ready")
+T.neq(Game.keypressed, nil, "Game.keypressed wrapped")
+
+-- ------------------------------------------- rebind + live translation
+
+ex.setRebinds({ [qId] = { pieces = { { kind = "key", name = "f6" } } } })
+ex.applyRebinds()
+T.eq(ex.state.rebinds[qId] ~= nil, true, "rebind is live")
+T.eq(ex.state.rebinds[qId].original[1].name, "q", "original kept for emission")
+
+-- the user presses F6: the wrap must re-emit the original "q" press edge
+received = {}
+Game.keypressed(Game, "f6")
+local sawQ, sawF6 = false, false
+for _, ev in ipairs(received) do
+  if ev[1] == "key" and ev[2] == "q" then sawQ = true end
+  if ev[1] == "key" and ev[2] == "f6" then sawF6 = true end
+end
+T.eq(sawQ, true, "new key re-emits the original trigger (q)")
+T.eq(sawF6, true, "new key passes through to the engine")
+
+-- release: original release edge follows
+received = {}
+Game.keyreleased(Game, "f6")
+local sawQRel = false
+for _, ev in ipairs(received) do
+  if ev[1] == "rel" and ev[2] == "q" then sawQRel = true end
+end
+T.eq(sawQRel, true, "release re-emits the original release")
+
+-- auto-repeat while held never re-emits
+received = {}
+Game.keypressed(Game, "f6")
+Game.keypressed(Game, "f6")
+local qCount = 0
+for _, ev in ipairs(received) do
+  if ev[1] == "key" and ev[2] == "q" then qCount = qCount + 1 end
+end
+T.eq(qCount, 1, "held auto-repeat fires the original once")
+
+-- --------------------------------------------------- multi-piece combo
+
+local gsId = "game_speed_toggle|main.lua|combo:back+leftshoulder"
+T.neq(ex.state.hotkeys[gsId], nil, "game_speed_toggle combo detected")
+ex.setRebinds({ [gsId] = { pieces = { { kind = "key", name = "g" } } } })
+ex.applyRebinds()
+
+received = {}
+Game.keypressed(Game, "g")
+local sawBack, sawLB = false, false
+for _, ev in ipairs(received) do
+  if ev[1] == "pad" and ev[2] == "back" then sawBack = true end
+  if ev[1] == "pad" and ev[2] == "leftshoulder" then sawLB = true end
+end
+T.eq(sawBack, true, "key rebind emits the pad combo (back)")
+T.eq(sawLB, true, "key rebind emits the pad combo (leftshoulder)")
+
+received = {}
+Game.keyreleased(Game, "g")
+local sawBackRel, sawLBRel = false, false
+for _, ev in ipairs(received) do
+  if ev[1] == "padrel" and ev[2] == "back" then sawBackRel = true end
+  if ev[1] == "padrel" and ev[2] == "leftshoulder" then sawLBRel = true end
+end
+T.eq(sawBackRel, true, "release emits both pad releases")
+T.eq(sawLBRel, true, "release emits both pad releases")
+
+-- ------------------------------------------------------- capture commit
+
+-- drive the screen's capture methods directly (they only touch
+-- self.capture/pending), simulating the raw-input routing
+local Menu = require("src.ui.Screens") -- screens registry lives in the loader
+local screen = run.loader.content.screens:get("ModsHotkeysMenu")
+local menu = screen.new(Game)
+T.eq(#menu.rows >= 6, true, "menu lists the detected hotkeys")
+
+-- A on a row arms the capture
+local row = nil
+for _, r in ipairs(menu.rows) do
+  if r.id == qId then row = r break end
+end
+T.neq(row, nil, "Q row present")
+menu:beginCapture(row)
+
+-- press TAB, press Z (still holding), release both: SELECT + A style
+menu:captureKey("tab")
+menu:captureKey("z")
+T.eq(#menu.pending, 2, "capture collects both pieces")
+T.eq(menu.heldCount, 2, "both pieces held")
+menu:captureKeyRelease("z")
+T.eq(menu.heldCount, 1, "first release keeps the combo armed")
+menu:captureKeyRelease("tab")
+T.eq(menu.capture, nil, "capture committed on the last release")
+
+local stored = ex.getRebinds()[qId]
+T.neq(stored, nil, "capture persisted the rebind")
+T.eq(stored.pieces[1].name, "tab", "first captured piece")
+T.eq(stored.pieces[2].name, "z", "second captured piece")
+T.eq(ex.currentTrigger(qId), "TAB+Z", "row shows the new trigger")
+
+-- escape cancels without storing
+ex.setRebinds({})
+ex.applyRebinds()
+menu:beginCapture(row)
+menu:captureKey("tab")
+menu:captureKey("escape")
+T.eq(menu.capture, nil, "escape ends the capture")
+T.eq(ex.getRebinds()[qId], nil, "cancelled capture stores nothing")
+
+-- reserved engine keys are skipped, not stored
+menu:beginCapture(row)
+menu:captureKey("f1")
+menu:captureKey("tab")
+T.eq(menu.heldCount, 1, "engine key skipped during capture")
+menu:captureKeyRelease("tab")
+
+-- SELECT resets the row
+menu:resetRow(row)
+T.eq(ex.getRebinds()[qId], nil, "reset row drops the rebind")
+T.eq(ex.currentTrigger(qId), "Q", "row falls back to the default")
+
+T.finish("mods_hotkeys_integration")

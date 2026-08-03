@@ -1,0 +1,15 @@
+{
+  "summary": "OPTIONS -> MODS HOTKEYS: detects hotkeys other mods listen for and lets you rebind them, multi-button combos included.",
+  "differences": [
+    "Scans enabled mods' sources for key/button/GB-combo triggers with no opt-in required",
+    "Multi-piece combos (SELECT + A, TAB + LB) as rebind targets, up to 4 pieces",
+    "Rebinds persist in options.lua and survive NEW GAME / CONTINUE",
+    "Translation layer re-emits the original trigger, so the source mod keeps working unchanged"
+  ],
+  "credits": [
+    "gen1recomp engine input routing (src/core/Input.lua, Game:keypressed)",
+    "BindingsMenu capture pattern (src/ui/BindingsMenu.lua)",
+    "QoL Toggles options-row + persistence pattern (mods/qol_toggles)",
+    "battle_move_info, bag_999, game_speed_toggle as the detection reference set"
+  ]
+}

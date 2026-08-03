@@ -1,0 +1,9 @@
+# Changelog
+
+## [0.1.0] - 2026-08-03
+
+- OPTIONS -> MODS HOTKEYS submenu listing hotkeys detected from other installed mods (wrapped keypressed keys, gamepadpressed buttons, held pad combos, GB-button combos).
+- Multi-button rebinding: press a combo like SELECT + A or TAB + LB, release to set.
+- Rebind translation layer at game.ready (outermost input wrap): the new trigger re-emits the original trigger's press edges, so the source mod is never modified.
+- Rebind persistence in options.lua's per-mod bucket; SELECT resets a row, START resets all.
+- Fixed: a captured combo now commits all its pieces (the pending list used to be emptied before the commit read it, so no rebind was ever stored).
