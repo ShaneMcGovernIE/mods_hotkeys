@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.9] - 2026-08-04
+
+- Added: Dex Radar's overworld hotkey (default `R`, configurable through its own OPTIONS -> HOTKEY KEY) is now detected and rebindable. The scanner understands the direct keyboard-poll idiom (`love.keyboard.isDown(key)` with an edge latch, the key read from `mod.options:get`), which also covers any other mod that polls the keyboard directly. Rebound triggers hold the polled key virtually for the combo's duration, so the source mod's own poll sees the press exactly as if the key had been pressed.
+
+- Added: Quick Select's SELECT trigger is now detected and rebindable. The scanner understands the pressQueue-polling idiom (`queued(input, "select")` and direct `input.state.select` reads, gated on `pressQueue` so movement code is never claimed), which also covers any other mod that polls Input's queue directly.
+
 ## [0.1.8] - 2026-08-03
 
 - Mod names longer than the row label window now scroll as a ticker (hold at the start, scroll to the end, hold, scroll back — the MoveRelearn name ticker) instead of bleeding over the box border.

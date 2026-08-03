@@ -84,6 +84,146 @@ T.eq(#parsed3.gb, 2, "gb combos: wasPressed pair + isDown pair")
 T.eq(parsed3.gb[1][1], "select", "gb combo first piece")
 T.eq(parsed3.gb[1][2], "a", "gb combo second piece")
 
+-- the state+queue polling idiom (Quick Select): a helper that checks a
+-- GB-button literal against input.pressQueue, plus direct input.state reads
+local SRC_QS = [[
+local function queued(input, button)
+  for _, value in ipairs(input.pressQueue or {}) do
+    if value == button then return true end
+  end
+  return false
+end
+mod.hooks:wrap("input.step", function(nextFn, game, dt)
+  nextFn(game, dt)
+  local input = game and game.input
+  if not input then return end
+  local selectDown = input.state and input.state.select == true
+  local selectPressed = queued(input, "select")
+  local direction = directionFor(input, selectPressed)
+  if direction and (selectDown or selectPressed) then
+    consumeQueued(input, { "select", direction })
+  end
+end)
+]]
+local parsedQS = ex.parseSource(SRC_QS)
+T.eq(parsedQS.gbSingles.select, true, "state+queue: select detected")
+T.eq(next(parsedQS.keys), nil, "state+queue claims no key literals")
+T.eq(#parsedQS.gb, 0, "state+queue claims no wasPressed pairs")
+
+-- input.state reads without the pressQueue idiom are movement code
+local SRC_STATE_ONLY = [[
+local function isMoving(input)
+  return input.state.up and input.state.down
+end
+]]
+T.eq(next(ex.parseSource(SRC_STATE_ONLY).gbSingles), nil,
+     "state reads without pressQueue are not claimed")
+
+-- a pressQueue helper polling a variable (a direction in a loop) is not
+-- a single-button trigger
+local SRC_QS_VAR = [[
+local function queued(input, button)
+  for _, value in ipairs(input.pressQueue or {}) do
+    if value == button then return true end
+  end
+  return false
+end
+for _, direction in ipairs(DIRECTIONS) do
+  if queued(input, direction) then move(direction) end
+end
+]]
+T.eq(next(ex.parseSource(SRC_QS_VAR).gbSingles), nil,
+     "variable button polls are not single-button triggers")
+
+-- the direct keyboard-poll idiom (Dex Radar): love.keyboard.isDown with
+-- an edge latch, the key read from mod.options:get
+local SRC_RADAR = [[
+mod.options:define({
+  { key = "hotkey_enabled", type = "toggle", label = "HOTKEY", default = true },
+  { key = "hotkey", type = "choice", label = "HOTKEY KEY", default = "r",
+    choices = HOTKEY_CHOICES },
+})
+mod.hooks:wrap("input.step", function(next, game, dt)
+  next(game, dt)
+  if not mod.options:get("hotkey_enabled") then return end
+  local key = mod.options:get("hotkey")
+  if not key or key == "off" then return end
+  local down = love.keyboard.isDown(key)
+  local edge = down and not keyWasDown
+  keyWasDown = down
+  if not edge then return end
+  openRadar(game)
+end)
+]]
+local parsedR = ex.parseSource(SRC_RADAR)
+T.eq(parsedR.pollField, "hotkey", "poll field captured from options:get")
+T.eq(parsedR.pollDefault, "r", "poll default captured from the schema row")
+T.eq(next(parsedR.keys), nil, "poll file claims no keypressed keys")
+T.eq(next(parsedR.gbSingles), nil, "poll file claims no queue polls")
+
+-- a keyboard-state read without the edge latch is not a hotkey
+local SRC_NO_LATCH = [[
+local down = love.keyboard.isDown("q")
+if down then run() end
+]]
+local parsedNL = ex.parseSource(SRC_NO_LATCH)
+T.eq(next(parsedNL.pollKeys), nil, "no latch -> no poll hotkey")
+
+-- a literal poll is a plain keypoll hotkey
+local SRC_POLL_LIT = [[
+local down = love.keyboard.isDown("q")
+if down and not wasDown then toggle() end
+]]
+local foundLit = ex.detectFromFiles({ ["main.lua"] = SRC_POLL_LIT }, "m", "M")
+T.eq(#foundLit, 1, "literal keyboard poll is a hotkey")
+T.eq(foundLit[1].id, "m|main.lua|keypoll:q", "literal keypoll id")
+T.eq(foundLit[1].poll, true, "literal poll marked poll")
+
+local filesR = { ["main.lua"] = SRC_RADAR }
+local foundR = ex.detectFromFiles(filesR, "dex_radar", "Dex Radar")
+T.eq(#foundR, 1, "radar file yields one hotkey")
+T.eq(foundR[1].id, "dex_radar|main.lua|keypoll:hotkey", "keypoll hotkey id")
+T.eq(foundR[1].pieces[1].kind, "key", "keypoll default piece kind")
+T.eq(foundR[1].pieces[1].name, "r", "keypoll default piece name")
+T.eq(foundR[1].poll, true, "keypoll marked poll for virtual emission")
+T.eq(foundR[1].pollField, "hotkey", "keypoll carries the options field")
+T.eq(ex.hotkeyPage(foundR[1].pieces), "pc", "keypoll is the PC page")
+
+-- the live key resolves from the loader's modOptions bucket (the exact
+-- table mod.options:get reads), then the schema default, then the scan
+-- default; "off" (Dex Radar's disable value) falls back to a real key
+local savedMods = Game.mods
+Game.mods = { modOptions = { dex_radar = { hotkey = "g" } },
+              optionSchemas = { dex_radar = {
+                { key = "hotkey", default = "r" } } } }
+T.eq(ex.resolvePollKey(foundR[1]), "g",
+     "resolvePollKey reads the live option")
+T.eq(ex.currentTrigger(foundR[1].id), "--", "unseeded row has no trigger")
+ex.state.hotkeys[foundR[1].id] = foundR[1]
+T.eq(ex.currentTrigger(foundR[1].id), "G", "poll row shows the live key")
+Game.mods = { modOptions = {}, optionSchemas = { dex_radar = {
+  { key = "hotkey", default = "r" } } } }
+T.eq(ex.resolvePollKey(foundR[1]), "r",
+     "resolvePollKey falls back to the schema default")
+Game.mods = { modOptions = { dex_radar = { hotkey = "off" } },
+              optionSchemas = { dex_radar = {
+                { key = "hotkey", default = "r" } } } }
+T.eq(ex.resolvePollKey(foundR[1]), "r", "off resolves to the default")
+Game.mods = savedMods
+ex.state.hotkeys = {}
+
+-- a poll hotkey folds into a rebind like any row, keeping the flags the
+-- emission layer needs
+ex.state.hotkeys[foundR[1].id] = foundR[1]
+ex.setRebinds({ [foundR[1].id] = { pieces = { { kind = "key", name = "f7" } } } })
+ex.applyRebinds()
+T.eq(ex.state.rebinds[foundR[1].id].poll, true, "rebind keeps the poll flag")
+T.eq(ex.state.rebinds[foundR[1].id].pollField, "hotkey",
+     "rebind keeps the options field")
+T.eq(ex.currentTrigger(foundR[1].id), "F7", "poll row rebinds like any row")
+ex.setRebinds({})
+ex.state.hotkeys = {}
+
 -- configurable trigger idiom (DexNav): a GB-button list polled through a
 -- dynamic wasPressed(helper(...)) call
 local SRC_DEXNAV = [[
@@ -163,6 +303,17 @@ T.eq(foundDex[1].pieces[1].kind, "gb", "gbcfg default piece kind")
 T.eq(foundDex[1].pieces[1].name, "select", "gbcfg default piece name")
 T.eq(foundDex[1].dynamicField, "dexNavButton", "gbcfg carries the save field")
 T.eq(foundDex[1].buttons.a, true, "gbcfg carries the mod's button list")
+
+-- quick-select style single-button poll joins the detection; both forms
+-- of the same button fold into one row
+local filesQS = { ["main.lua"] = SRC_QS }
+local foundQS = ex.detectFromFiles(filesQS, "jj_quick_select", "Quick Select")
+T.eq(#foundQS, 1, "quick select file yields one hotkey")
+T.eq(foundQS[1].id, "jj_quick_select|main.lua|gb:select",
+     "gb single hotkey id")
+T.eq(foundQS[1].pieces[1].kind, "gb", "gb single piece kind")
+T.eq(foundQS[1].pieces[1].name, "select", "gb single piece name")
+T.eq(ex.describe(foundQS[1].pieces), "SELECT", "gb single described")
 
 -- ------------------------------------------------------- describe
 

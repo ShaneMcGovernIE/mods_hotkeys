@@ -8,6 +8,9 @@
 --   button == "leftshoulder" (wrapped Game/Input:gamepadpressed)
 --   held.back and held.leftshoulder   (held pad-button combos)
 --   wasPressed("select") and wasPressed("a")   (GB-button combos)
+--   queued(input, "select") / input.state.select  (pressQueue polling)
+--   love.keyboard.isDown(key) with an edge latch   (direct keyboard polls,
+--     e.g. Dex Radar's HOTKEY read from mod.options:get)
 -- and each distinct trigger becomes one row in the submenu.
 --
 -- Rebinding is a translation layer, installed at game.ready (the lowest
@@ -146,8 +149,9 @@ local function dynamicFieldName(text)
 end
 
 local function parseSource(text)
-  local out = { keys = {}, pads = {}, held = {}, gb = {},
-                dynamic = false, buttonLists = {} }
+  local out = { keys = {}, pads = {}, held = {}, gb = {}, gbSingles = {},
+                dynamic = false, buttonLists = {}, pollKeys = {},
+                pollField = nil, pollDefault = nil }
   if type(text) ~= "string" then return out end
   if text:find("keypressed") then
     for lit in text:gmatch('key%s*[=~]=%s*["\'](%w+)["\']') do
@@ -170,6 +174,45 @@ local function parseSource(text)
   for a, b in text:gmatch('isDown%(%s*["\'](%w+)["\']%s*%)'
     .. '%s*and%s*[%w_.:]*isDown%(%s*["\'](%w+)["\']%s*%)') do
     out.gb[#out.gb + 1] = { a, b }
+  end
+  -- The state+queue polling idiom (Quick Select): a helper that checks a
+  -- GB-button literal against input.pressQueue, and direct input.state.<b>
+  -- reads.  Gated on pressQueue so ordinary movement state reads are never
+  -- claimed as hotkeys; the set dedupes both forms of the same button.
+  if text:find("pressQueue") then
+    for lit in text:gmatch('%(%s*input%s*,%s*["\'](%w+)["\']%)') do
+      if GB_BUTTONS[lit] then out.gbSingles[lit] = true end
+    end
+    for lit in text:gmatch('input%.state%.(%w+)') do
+      if GB_BUTTONS[lit] then out.gbSingles[lit] = true end
+    end
+  end
+  -- The direct keyboard-poll idiom (Dex Radar): a hotkey read straight
+  -- off love.keyboard.isDown inside an input.step wrap, with an edge
+  -- latch (`down and not keyWasDown`) so it fires once per press.  Gated
+  -- on both the poll and the latch, so ordinary keyboard-state reads
+  -- (hold-to-run and the like) are never claimed.  A literal poll yields
+  -- one key hotkey; a dynamic poll (`local key = mod.options:get(...)`)
+  -- yields a configurable one whose current key is read back from the
+  -- loader's modOptions bucket, exactly where mod.options:get reads it.
+  if text:find("love%.keyboard%.isDown") and text:find("down%s+and%s+not") then
+    for lit in text:gmatch('love%.keyboard%.isDown%s*%(%s*["\'](%w+)["\']%s*%)') do
+      out.pollKeys[lit] = true
+    end
+    local arg = text:match('love%.keyboard%.isDown%s*%(%s*([%w_]+)%s*%)')
+    if arg and not out.pollKeys[arg] then
+      -- the polled variable's own options assignment, so an unrelated
+      -- earlier `x = mod.options:get(...)` is never claimed
+      local field = text:match(arg
+        .. '%s*=%s*mod%.options:get%s*%(%s*["\']([%w_]+)["\']%s*%)')
+      if field then
+        out.pollField = field
+        -- the schema row's default (`default = "r"`) is the row's default
+        -- trigger; `.-` crosses the row's other keys (type/label/choices)
+        out.pollDefault = text:match('key%s*=%s*["\']'
+          .. field .. '["\']%s*,.-default%s*=%s*["\'](%w+)["\']')
+      end
+    end
   end
   if hasDynamicPoll(text) then
     local lists = buttonLists(text)
@@ -225,6 +268,36 @@ local function detectFromFiles(files, modId, modName)
         modId = modId, modName = modName,
         pieces = { { kind = "gb", name = pair[1] },
                    { kind = "gb", name = pair[2] } },
+      }
+    end
+    -- single-button state/queue polls (Quick Select style): one hotkey
+    -- per GB button the file reads straight off Input
+    for lit in pairs(parsed.gbSingles) do
+      out[#out + 1] = {
+        id = ("%s|%s|gb:%s"):format(modId, rel, lit),
+        modId = modId, modName = modName,
+        pieces = { { kind = "gb", name = lit } },
+      }
+    end
+    -- keyboard polls (Dex Radar style): literal polls are plain key
+    -- hotkeys marked poll -- the rebind holds the key virtually, since
+    -- the source mod reads love.keyboard.isDown, not the input chain;
+    -- the configurable poll carries its options field + schema default
+    for lit in pairs(parsed.pollKeys) do
+      out[#out + 1] = {
+        id = ("%s|%s|keypoll:%s"):format(modId, rel, lit),
+        modId = modId, modName = modName,
+        pieces = { { kind = "key", name = lit } },
+        poll = true,
+      }
+    end
+    if parsed.pollField and parsed.pollDefault then
+      out[#out + 1] = {
+        id = ("%s|%s|keypoll:%s"):format(modId, rel, parsed.pollField),
+        modId = modId, modName = modName,
+        pieces = { { kind = "key", name = parsed.pollDefault } },
+        poll = true, pollField = parsed.pollField,
+        pollDefault = parsed.pollDefault,
       }
     end
     -- configurable triggers: a GB-button list polled through a dynamic
@@ -411,6 +484,31 @@ local function resolveGBConfig(hk)
   return nil
 end
 
+-- The LIVE key a keyboard-poll hotkey polls: the source mod's own choice
+-- -- loader.modOptions[modId][field], the exact bucket mod.options:get
+-- reads -- else its schema default, else the default captured at scan
+-- time.  "off" (Dex Radar's disable value) resolves to the default: the
+-- source mod short-circuits before polling anyway, so a rebind can never
+-- resurrect a disabled hotkey.
+local function loader()
+  return Game.mods
+end
+
+local function resolvePollKey(hk)
+  local l = loader()
+  local bucket = l and l.modOptions and l.modOptions[hk.modId]
+  local v = bucket and bucket[hk.pollField]
+  if type(v) == "string" and v ~= "off" then return v end
+  for _, row in ipairs(l and l.optionSchemas
+      and l.optionSchemas[hk.modId] or {}) do
+    if row.key == hk.pollField then
+      local d = row.default
+      if type(d) == "string" and d ~= "off" then return d end
+    end
+  end
+  return hk.pollDefault
+end
+
 -- The pieces a rebind must re-emit: for gbcfg hotkeys the player's
 -- current button choice, otherwise the detected default.
 local function originalPieces(rb)
@@ -427,12 +525,9 @@ local state = {
   hotkeys = {},   -- detected hotkeys by id (built at game.ready)
   rebinds = {},   -- live: id -> { pieces, combo, original }
   capturing = false, -- the rebind capture owns raw input
+  virtual = {},   -- keys held virtually for keyboard-poll hotkeys
 }
 local lastJoy = nil -- most recent real joystick, for pad emissions
-
-local function loader()
-  return Game.mods
-end
 
 local MOD_ID = "mods_hotkeys"
 
@@ -468,6 +563,10 @@ local function currentTrigger(id)
     local resolved = resolveGBConfig(hk)
     if resolved then return describe(resolved) end
   end
+  if hk.pollField then
+    local k = resolvePollKey(hk)
+    if k then return describe({ { kind = "key", name = k } }) end
+  end
   return describe(hk.pieces)
 end
 
@@ -497,7 +596,10 @@ local function applyRebinds()
         live[id] = { pieces = pieces, combo = comboState(pieces),
                      original = hk.pieces,
                      dynamicField = hk.dynamicField,
-                     buttons = hk.buttons }
+                     buttons = hk.buttons,
+                     poll = hk.poll, pollField = hk.pollField,
+                     pollDefault = hk.pollDefault,
+                     modId = hk.modId }
       end
     end
   end
@@ -869,14 +971,29 @@ return function(mod)
       end
     end
 
+    -- Poll-based hotkeys (Dex Radar) read love.keyboard.isDown directly,
+    -- so edge re-emission can never reach them.  Instead the rebound
+    -- combo holds the polled key virtually for its whole duration --
+    -- down on fire, up on break -- and the isDown wrap below makes the
+    -- source mod's poll see exactly the press it latches.
+    local function holdPoll(rb, down)
+      local key = rb.pollField and resolvePollKey(rb) or
+        (rb.original and rb.original[1] and rb.original[1].name)
+      if not key then return end
+      if down then state.virtual[key] = true
+      else state.virtual[key] = nil end
+    end
+
     local function tick(ev, pKey, pPad, rKey, rPad, joy)
       if state.capturing then return end
       for _, rb in pairs(state.rebinds) do
         local _, tr = comboStep(rb.combo, ev)
         if tr == "fire" then
-          emit(originalPieces(rb), pKey, pPad, joy)
+          if rb.poll then holdPoll(rb, true)
+          else emit(originalPieces(rb), pKey, pPad, joy) end
         elseif tr == "break" then
-          emit(originalPieces(rb), rKey, rPad, joy)
+          if rb.poll then holdPoll(rb, false)
+          else emit(originalPieces(rb), rKey, rPad, joy) end
         end
       end
     end
@@ -922,6 +1039,18 @@ return function(mod)
         joystick)
       return vPadRel(self, joystick, button)
     end
+
+    -- Keyboard-poll hotkeys query love.keyboard.isDown, so a virtual
+    -- hold must answer those polls too.  Only keys a rebind currently
+    -- holds virtually are affected; every other query passes through.
+    if love and love.keyboard and not Game._modsHotkeysPollInstalled then
+      Game._modsHotkeysPollInstalled = true
+      local vIsDown = love.keyboard.isDown
+      love.keyboard.isDown = function(key, ...)
+        if state.virtual[key] then return true end
+        return vIsDown(key, ...)
+      end
+    end
   end, -100000)
 
   mod.exports = {
@@ -941,6 +1070,7 @@ return function(mod)
     applyRebinds = applyRebinds,
     resolveGBConfig = resolveGBConfig,
     originalPieces = originalPieces,
+    resolvePollKey = resolvePollKey,
     tickerOffset = tickerOffset,
     state = state,
   }

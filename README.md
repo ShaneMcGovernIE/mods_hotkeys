@@ -4,7 +4,7 @@ Detects the hotkeys other installed mods listen for — and the engine's own bui
 
 ## What it does
 
-- Scans every enabled mod's Lua sources for the input idioms mods actually use: wrapped `keypressed` key checks (`key == "q"`), wrapped `gamepadpressed` button checks (`button == "leftshoulder"`), held pad-button combos (`held.back and held.leftshoulder`), GB-button combos (`wasPressed("select") and wasPressed("a")`), and configurable GB-button triggers (DexNav's `DEXNAV_BUTTONS = { "select", "start", "a", "b" }` polled via `wasPressed(dexNavButton(game))`).
+- Scans every enabled mod's Lua sources for the input idioms mods actually use: wrapped `keypressed` key checks (`key == "q"`), wrapped `gamepadpressed` button checks (`button == "leftshoulder"`), held pad-button combos (`held.back and held.leftshoulder`), GB-button combos (`wasPressed("select") and wasPressed("a")`), configurable GB-button triggers (DexNav's `DEXNAV_BUTTONS = { "select", "start", "a", "b" }` polled via `wasPressed(dexNavButton(game))`), and direct keyboard polls (Dex Radar's `love.keyboard.isDown(key)` read from its own options, with an edge latch).
 - Includes the engine's built-in hotkeys when the running build has them: game speed via the `1` key and the L2/R2 bumpers (SPEED UP / SPEED DOWN rows, rebound like any mod hotkey).
 - Each distinct trigger becomes a row on one of two pages — OPTIONS -> PC HOTKEYS (keyboard triggers) and OPTIONS -> PAD HOTKEYS (controller triggers) — showing the current trigger (e.g. `Q`, `LB+BACK`, `R2`, `SELECT+A`).
 - A rebinds a row: press your new combo (any mix of keyboard keys and pad buttons), release to set. Escape cancels. SELECT resets one row, START resets everything.
@@ -66,10 +66,26 @@ local DEXNAV_BUTTONS = { "select", "start", "a", "b" }  -- name must contain "bu
 if input:wasPressed(dexNavButton(game)) then search() end
 ```
 
+### Direct keyboard poll (a polled key, configurable via options)
+
+```lua
+-- key = mod.options:get("hotkey")  -- defined in mod.options:define, default "r"
+local down = love.keyboard.isDown(key)
+local edge = down and not keyWasDown   -- the edge latch is what gets detected
+keyWasDown = down
+if edge then openRadar() end
+```
+
+Rebinding such a trigger holds the polled key virtually while your new
+combo is held, so the source mod's own `love.keyboard.isDown` poll sees
+the press — the current key is read back live from its options, so
+changing the key in the source mod's OPTIONS menu updates the row.
+
 ### Rules of thumb
 
 - Keep triggers as literals — `key == "q"`, never `key == spec.key`. Literals are what the scanner reads.
 - The literal must appear in a file that mentions `keypressed` or `gamepadpressed`, so unrelated `spec.key == key` comparisons are never claimed.
+- A direct `love.keyboard.isDown` poll needs the edge latch (`down and not keyWasDown`); keyboard-state reads without it are never claimed.
 - Write pad combos as one `held.a and held.b` expression so the pieces are recognised as a single trigger.
 - Put the trigger in the entry or a top-level `.lua` file; `tests/` are never scanned.
 
