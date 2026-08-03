@@ -454,13 +454,17 @@ function ModsHotkeysMenu:draw()
     -- the seams and look like clipped text
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.rectangle("fill", 0, 0, 160, 144)
+    -- instruction box (0,2,20,5): border rows y=16 and y=48, interior
+    -- glyph rows at y=24/32/40 -- every line must live on an interior
+    -- row or it collides with the border
     Font.drawBox(0, 2, 20, 5)
     love.graphics.setColor(0, 0, 0, 1)
     Font.draw("PRESS A COMBO", 24, 24)
-    Font.draw("RELEASE TO SET", 24, 36)
-    Font.draw("ESC CANCELS", 24, 48)
-    -- the live combo gets its own box, centered
-    Font.drawBox(0, 8, 20, 6)
+    Font.draw("RELEASE TO SET", 24, 32)
+    Font.draw("ESC CANCELS", 24, 40)
+    -- the live combo gets its own box, centered (border rows y=72/120,
+    -- interior rows y=80..112)
+    Font.drawBox(0, 9, 20, 6)
     local label = describe(self.pending or {})
     if label ~= "--" then
       if #label > 18 then label = label:sub(1, 17) .. "+" end

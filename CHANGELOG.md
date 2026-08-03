@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.4] - 2026-08-03
+
+- Fixed the capture dialog text layout: every line now sits on an interior glyph row, so "ESC CANCELS" no longer overlaps the box's bottom border.
+
 ## [0.1.3] - 2026-08-03
 
 - Capture overlay is now a full-screen white pass with two boxes, so the options list underneath can never peek through the seams.
