@@ -51,12 +51,16 @@ local function pieceName(p)
   return #s > 8 and s:sub(1, 8) or s
 end
 
+-- Join with the multiply glyph: the charmap has no ASCII "+" (it would
+-- render as a blank tile), and "×" is the vanilla separator idiom (the
+-- bag's POTION ×12).  describe output is what the rows and the capture
+-- box draw.
 local function describe(pieces)
   local out = {}
   for _, p in ipairs(pieces or {}) do
     out[#out + 1] = pieceName(p)
   end
-  return #out > 0 and table.concat(out, "+") or "--"
+  return #out > 0 and table.concat(out, "×") or "--"
 end
 
 -- Scan one mod source file for hotkey idioms.  The key/button literal

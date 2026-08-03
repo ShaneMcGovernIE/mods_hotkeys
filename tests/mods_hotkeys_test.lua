@@ -161,10 +161,10 @@ T.eq(foundDex[1].pieces[1].name, "select", "gbcfg default piece name")
 
 T.eq(ex.describe({ { kind = "key", name = "tab" },
                   { kind = "pad", name = "leftshoulder" } }),
-     "TAB+LB", "key + pad combo described")
+     "TAB×LB", "key + pad combo described")
 T.eq(ex.describe({ { kind = "gb", name = "select" },
                   { kind = "gb", name = "a" } }),
-     "SELECT+A", "gb combo described")
+     "SELECT×A", "gb combo described")
 T.eq(ex.describe({ { kind = "key", name = "return" } }),
      "ENTER", "return -> ENTER")
 T.eq(ex.describe({ { kind = "key", name = "leftshoulder" } }),

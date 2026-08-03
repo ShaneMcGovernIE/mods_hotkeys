@@ -177,7 +177,7 @@ local stored = ex.getRebinds()[qId]
 T.neq(stored, nil, "capture persisted the rebind")
 T.eq(stored.pieces[1].name, "tab", "first captured piece")
 T.eq(stored.pieces[2].name, "z", "second captured piece")
-T.eq(ex.currentTrigger(qId), "TAB+Z", "row shows the new trigger")
+T.eq(ex.currentTrigger(qId), "TAB×Z", "row shows the new trigger")
 
 -- escape cancels without storing
 ex.setRebinds({})

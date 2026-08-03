@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.5] - 2026-08-03
+
+- Combo separator is now "×" (T×Y, SELECT×A) instead of ASCII "+" — the charmap has no "+" glyph, so it rendered as a blank tile in the menu rows and the capture box.
+
 ## [0.1.4] - 2026-08-03
 
 - Fixed the capture dialog text layout: every line now sits on an interior glyph row, so "ESC CANCELS" no longer overlaps the box's bottom border.
