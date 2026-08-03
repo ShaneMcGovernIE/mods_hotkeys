@@ -152,8 +152,8 @@ T.eq(sawLBRel, true, "release emits both pad releases")
 -- self.capture/pending), simulating the raw-input routing
 local Menu = require("src.ui.Screens") -- screens registry lives in the loader
 local screen = run.loader.content.screens:get("ModsHotkeysMenu")
-local menu = screen.new(Game)
-T.eq(#menu.rows >= 6, true, "menu lists the detected hotkeys")
+local menu = screen.new(Game, "pc")
+T.eq(#menu.rows >= 3, true, "pc page lists the detected hotkeys")
 
 -- A on a row arms the capture
 local row = nil
@@ -199,5 +199,91 @@ menu:captureKeyRelease("tab")
 menu:resetRow(row)
 T.eq(ex.getRebinds()[qId], nil, "reset row drops the rebind")
 T.eq(ex.currentTrigger(qId), "Q", "row falls back to the default")
+
+-- ---------------------------------------------------- gbcfg (DexNav) path
+
+-- a configurable-trigger mod in the loader: DexNav ships a GB-button
+-- list polled through a dynamic wasPressed(helper(...)) call
+local DEXNAV_SRC = [[
+local DEXNAV_BUTTONS = { "select", "start", "a", "b" }
+local function dexNavButton(game)
+  local saved = game.save and game.save.options and game.save.options.dexNavButton
+  for _, btn in ipairs(DEXNAV_BUTTONS) do
+    if btn == saved then return btn end
+  end
+  return "select"
+end
+if Game.input:wasPressed(dexNavButton(Game)) and Game.save.dexNavReg then
+  search()
+end
+]]
+local repoRead = loader.fs.read
+local repoItems = loader.fs.getDirectoryItems
+loader.mods["DexNav"] = {
+  manifest = { name = "DexNav", entry = "main.lua" },
+  enabled = true, path = "mods/DexNav",
+}
+loader.fs = {
+  read = function(path)
+    if path == "mods/DexNav/main.lua" then return DEXNAV_SRC end
+    return repoRead(path)
+  end,
+  getDirectoryItems = function(path)
+    if path == "mods/DexNav" then return { "main.lua" } end
+    return repoItems(path)
+  end,
+}
+ex.state.hotkeys = {}
+for _, hk in ipairs(ex.scanMods(loader, "mods_hotkeys")) do
+  ex.state.hotkeys[hk.id] = hk
+end
+local dexId = "DexNav|main.lua|gbcfg:select"
+T.neq(ex.state.hotkeys[dexId], nil, "dexnav gbcfg hotkey detected")
+T.eq(ex.state.hotkeys[dexId].dynamicField, "dexNavButton",
+     "gbcfg carries the save field name")
+
+-- the canonical select binding needs the engine maps for emission
+local Input = require("src.core.Input")
+Input.keyBindings = { tab = "select", z = "a", x = "b", escape = "start" }
+Input.padBindings = { back = "select", a = "a", b = "b", start = "start" }
+
+-- the row shows the player's saved DexNav trigger, not the shipped default
+T.eq(ex.currentTrigger(dexId), "SELECT", "no save yet -> default trigger")
+Game.save = { options = { dexNavButton = "b" } }
+T.eq(ex.currentTrigger(dexId), "B", "row tracks OPTIONS > DEXNAV TRIGGER")
+
+-- rebind the DexNav row to F while the saved trigger is B: pressing F
+-- must emit B's canonical binding (x), never the default select (tab)
+ex.setRebinds({ [dexId] = { pieces = { { kind = "key", name = "f" } } } })
+ex.applyRebinds()
+
+received = {}
+Game.keypressed(Game, "f")
+local sawX, sawTab = false, false
+for _, ev in ipairs(received) do
+  if ev[1] == "key" and ev[2] == "x" then sawX = true end
+  if ev[1] == "key" and ev[2] == "tab" then sawTab = true end
+end
+T.eq(sawX, true, "F re-emits the SAVED trigger (b via x)")
+T.eq(sawTab, false, "F does not re-emit the default trigger (select/tab)")
+
+-- release follows the same resolution
+received = {}
+Game.keyreleased(Game, "f")
+local sawXRel = false
+for _, ev in ipairs(received) do
+  if ev[1] == "rel" and ev[2] == "x" then sawXRel = true end
+end
+T.eq(sawXRel, true, "release re-emits the saved trigger release")
+
+-- no saved choice -> falls back to the default select emission
+Game.save = { options = {} }
+received = {}
+Game.keypressed(Game, "f")
+local sawTab2 = false
+for _, ev in ipairs(received) do
+  if ev[1] == "key" and ev[2] == "tab" then sawTab2 = true end
+end
+T.eq(sawTab2, true, "no saved choice -> default select (tab) emission")
 
 T.finish("mods_hotkeys_integration")

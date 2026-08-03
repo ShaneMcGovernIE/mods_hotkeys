@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.8] - 2026-08-03
+
+- Mod names longer than the row label window now scroll as a ticker (hold at the start, scroll to the end, hold, scroll back — the MoveRelearn name ticker) instead of bleeding over the box border.
+
 ## [0.1.7] - 2026-08-03
 
 - Hotkeys are now split into two pages: OPTIONS -> PC HOTKEYS (keyboard triggers) and OPTIONS -> PAD HOTKEYS (controller triggers). A row's page is fixed by its default trigger, so rebinds never shuffle rows between pages.

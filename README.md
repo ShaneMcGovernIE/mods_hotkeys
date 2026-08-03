@@ -9,6 +9,7 @@ Detects the hotkeys other installed mods listen for — and the engine's own bui
 - Each distinct trigger becomes a row on one of two pages — OPTIONS -> PC HOTKEYS (keyboard triggers) and OPTIONS -> PAD HOTKEYS (controller triggers) — showing the current trigger (e.g. `Q`, `LB+BACK`, `R2`, `SELECT+A`).
 - A rebinds a row: press your new combo (any mix of keyboard keys and pad buttons), release to set. Escape cancels. SELECT resets one row, START resets everything.
 - Rebinds persist in options.lua, so they survive NEW GAME, CONTINUE and quitting.
+- Mod names longer than the row's label window scroll as a ticker (hold at the start, scroll to the end, hold, scroll back), so long names like "Crystal Animated Sprites With Shiny Visuals" stay readable instead of bleeding over the box border.
 
 ## How to try it
 

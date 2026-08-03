@@ -27,8 +27,40 @@ local Game = require("src.core.Game")
 -- required at module scope: the menu methods below (defined outside the
 -- entry chunk) render through OptionRows
 local OptionRows = require("src.ui.OptionRows")
+local Font = require("src.render.Font")
 
 -- ---------------------------------------------------------------- pure
+
+-- Ticker pacing (the MoveRelearn name ticker's): hold at each end so the
+-- player can read the whole name, scroll at 16px/s (half a second per
+-- glyph).
+local TICKER_HOLD = 1.6
+local TICKER_SPEED = 16
+
+-- Pure (mod.exports.tickerOffset for headless tests): horizontal offset
+-- for an overflowing label at time t (seconds).  Cycle: hold at 0, scroll
+-- out to -overflow, hold, scroll back to 0.  Labels that fit (overflow <=
+-- 0) are static.
+local function tickerOffset(t, overflow)
+  if not (overflow and overflow > 0) then return 0 end
+  local scroll = overflow / TICKER_SPEED
+  local cycle = 2 * TICKER_HOLD + 2 * scroll
+  local p = t % cycle
+  if p < TICKER_HOLD then return 0 end
+  p = p - TICKER_HOLD
+  if p < scroll then return -p * TICKER_SPEED end
+  p = p - scroll
+  if p < TICKER_HOLD then return -overflow end
+  p = p - TICKER_HOLD
+  return -overflow + p * TICKER_SPEED
+end
+
+-- Label geometry for OptionRows rows: labels start at x=16 (OptionRows.draw)
+-- and the engine's text convention pads 8px inside the box, so a label
+-- clips at the inner right edge 152.  The GB font is a flat 8px/glyph, so
+-- the window is 136px = 17 glyphs.  Labels wider than that ticker.
+local LABEL_X = 16
+local LABEL_CLIP_W = 152 - LABEL_X
 
 -- short display names, same spirit as BindingsMenu's KEY_SHORT/PAD_SHORT
 local SHORT = {
@@ -82,14 +114,17 @@ local function buttonLists(text)
   local lists = {}
   for name, list in text:gmatch("([%w_]+)%s*=%s*{([^{}]*)}") do
     if name:lower():find("button") then
-      local count, first = 0, nil
+      local count, first, buttons = 0, nil, {}
       for lit in list:gmatch('["\'](%w+)["\']') do
         if GB_BUTTONS[lit] then
           count = count + 1
           if not first then first = lit end
+          buttons[lit] = true
         end
       end
-      if count >= 2 then lists[#lists + 1] = { first = first } end
+      if count >= 2 then
+        lists[#lists + 1] = { first = first, buttons = buttons }
+      end
     end
   end
   return lists
@@ -100,6 +135,14 @@ end
 local function hasDynamicPoll(text)
   return text:find('wasPressed%(%s*[^"\']') ~= nil
       or text:find('isDown%(%s*[^"\']') ~= nil
+end
+
+-- The polled helper's name (dexNavButton in the DexNav idiom); the mod
+-- stores its chosen trigger in the save under the same name
+-- (save.options.dexNavButton), which the rebind layer re-reads live.
+local function dynamicFieldName(text)
+  return text:match('wasPressed%(%s*([%w_]+)%(')
+      or text:match('isDown%(%s*([%w_]+)%(')
 end
 
 local function parseSource(text)
@@ -132,6 +175,7 @@ local function parseSource(text)
     local lists = buttonLists(text)
     if #lists > 0 then
       out.dynamic = true
+      out.dynamicField = dynamicFieldName(text)
       out.buttonLists = lists
     end
   end
@@ -184,13 +228,17 @@ local function detectFromFiles(files, modId, modName)
       }
     end
     -- configurable triggers: a GB-button list polled through a dynamic
-    -- wasPressed/isDown; the list's first button is the default trigger
+    -- wasPressed/isDown; the list's first button is the default trigger,
+    -- and dynamicField/buttons let the rebind layer re-read the player's
+    -- current choice (save.options.<field>) at emission time
     if parsed.dynamic then
       for _, list in ipairs(parsed.buttonLists) do
         out[#out + 1] = {
           id = ("%s|%s|gbcfg:%s"):format(modId, rel, list.first),
           modId = modId, modName = modName,
           pieces = { { kind = "gb", name = list.first } },
+          dynamicField = parsed.dynamicField,
+          buttons = list.buttons,
         }
       end
     end
@@ -346,6 +394,33 @@ local function canonicalFor(button, keyBindings, padBindings)
   return nil
 end
 
+-- The LIVE trigger of a configurable (gbcfg) hotkey: the source mod's
+-- own saved choice -- save.options.<dynamicField>, read at emission time
+-- because the real save only exists after save.loaded -- when it is one
+-- of the buttons that mod listens for, else the default (list first).
+-- DexNav writes OPTIONS > DEXNAV TRIGGER to save.options.dexNavButton and
+-- polls it through dexNavButton(game); the resolution mirrors that
+-- helper's own validation so a rebind emits the button DexNav is actually
+-- listening for, not the one it ships with.
+local function resolveGBConfig(hk)
+  local save = Game.save and Game.save.options
+  local saved = save and save[hk.dynamicField]
+  if type(saved) == "string" and hk.buttons and hk.buttons[saved] then
+    return { { kind = "gb", name = saved } }
+  end
+  return nil
+end
+
+-- The pieces a rebind must re-emit: for gbcfg hotkeys the player's
+-- current button choice, otherwise the detected default.
+local function originalPieces(rb)
+  if rb.dynamicField then
+    local resolved = resolveGBConfig(rb)
+    if resolved then return resolved end
+  end
+  return rb.original
+end
+
 -- ------------------------------------------------------------ runtime
 
 local state = {
@@ -383,12 +458,17 @@ local function setRebinds(map)
 end
 
 -- The current trigger for a hotkey row: the rebind if one exists, else
--- the detected default.
+-- the live configurable trigger (gbcfg) or the detected default.
 local function currentTrigger(id)
   local rb = state.rebinds[id]
   if rb then return describe(rb.pieces) end
   local hk = state.hotkeys[id]
-  return hk and describe(hk.pieces) or "--"
+  if not hk then return "--" end
+  if hk.dynamicField then
+    local resolved = resolveGBConfig(hk)
+    if resolved then return describe(resolved) end
+  end
+  return describe(hk.pieces)
 end
 
 -- Row value for the OptionRows viewport: the value line starts 24px in
@@ -415,7 +495,9 @@ local function applyRebinds()
       end
       if #pieces > 0 then
         live[id] = { pieces = pieces, combo = comboState(pieces),
-                     original = hk.pieces }
+                     original = hk.pieces,
+                     dynamicField = hk.dynamicField,
+                     buttons = hk.buttons }
       end
     end
   end
@@ -457,6 +539,10 @@ function ModsHotkeysMenu:exit()
 end
 
 function ModsHotkeysMenu:update(dt)
+  -- advance the label tickers (the OptionRows.draw wrap reads row.tick)
+  for _, row in ipairs(self.rows or {}) do
+    if row.ticker then row.tick = (row.tick or 0) + (dt or 0) end
+  end
   if self.capture then return end -- the raw capture owns the input
   local input = self.game.input
   if input:wasPressed("start") then
@@ -645,6 +731,46 @@ end
 return function(mod)
   local Strings = require("src.core.Strings")
 
+  -- Long mod-name labels ticker in the hotkey rows: OptionRows.draw has no
+  -- clip (a name wider than the box bleeds over its border), so the wrap
+  -- blanks ticker rows for the vanilla pass and redraws their label itself,
+  -- scissored to the label window and offset by the ticker.  Only rows
+  -- carrying row.ticker are touched; every other OptionRows user (the
+  -- OPTIONS menu, the mod manager) draws exactly as before.  The blank is
+  -- guarded so a second ticker mod (QoL Toggles) composing its own wrap
+  -- never clobbers the saved label: the first wrapper to see the row owns
+  -- the blank/restore and the rest skip.
+  if not OptionRows._modsHotkeysTickerInstalled then
+    OptionRows._modsHotkeysTickerInstalled = true
+    local vanillaRowsDraw = OptionRows.draw
+    OptionRows.draw = function(game, rows, index, scroll, bottomLabel,
+                               bottomRow)
+      local ticked = {}
+      for slot = 1, OptionRows.VISIBLE do
+        local row = rows[(scroll or 0) + slot]
+        if row and row.ticker and row._label == nil then
+          ticked[#ticked + 1] = { slot = slot, row = row }
+          row._label = row.label
+          row.label = ""
+        end
+      end
+      vanillaRowsDraw(game, rows, index, scroll, bottomLabel, bottomRow)
+      for _, entry in ipairs(ticked) do
+        local row = entry.row
+        row.label = row._label
+        row._label = nil
+        local y = ((entry.slot - 1) * 4 + 1) * 8
+        local g = love and love.graphics
+        if g and g.setScissor then
+          g.setScissor(row.ticker.x, y, row.ticker.w, 8)
+        end
+        Font.draw(row.label, row.ticker.x
+            + tickerOffset(row.tick or 0, row.ticker.overflow), y)
+        if g and g.setScissor then g.setScissor() end
+      end
+    end
+  end
+
   mod.content.screens:register("ModsHotkeysMenu", { new = function(game, page)
     local rows = {}
     local ids = {}
@@ -653,12 +779,22 @@ return function(mod)
     for _, id in ipairs(ids) do
       local hk = state.hotkeys[id]
       if hotkeyPage(hk.pieces) == page then
-        rows[#rows + 1] = {
+        local label = hk.label or Strings(hk.modName)
+        local row = {
           id = id,
-          label = hk.label or Strings(hk.modName),
+          label = label,
           value = function() return rowValue(id) end,
           hotkey = hk,
         }
+        -- a mod name wider than the label window tickers instead of
+        -- bleeding over the box border (row.tick is advanced in update)
+        local w = Font.width(label)
+        if w > LABEL_CLIP_W then
+          row.ticker = { x = LABEL_X, w = LABEL_CLIP_W,
+                         overflow = w - LABEL_CLIP_W }
+          row.tick = 0
+        end
+        rows[#rows + 1] = row
       end
     end
     return setmetatable({
@@ -738,9 +874,9 @@ return function(mod)
       for _, rb in pairs(state.rebinds) do
         local _, tr = comboStep(rb.combo, ev)
         if tr == "fire" then
-          emit(rb.original, pKey, pPad, joy)
+          emit(originalPieces(rb), pKey, pPad, joy)
         elseif tr == "break" then
-          emit(rb.original, rKey, rPad, joy)
+          emit(originalPieces(rb), rKey, rPad, joy)
         end
       end
     end
@@ -803,6 +939,9 @@ return function(mod)
     setRebinds = setRebinds,
     currentTrigger = currentTrigger,
     applyRebinds = applyRebinds,
+    resolveGBConfig = resolveGBConfig,
+    originalPieces = originalPieces,
+    tickerOffset = tickerOffset,
     state = state,
   }
 end

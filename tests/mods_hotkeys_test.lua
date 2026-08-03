@@ -103,6 +103,8 @@ local parsed5 = ex.parseSource(SRC_DEXNAV)
 T.eq(parsed5.dynamic, true, "dynamic wasPressed detected")
 T.eq(#parsed5.buttonLists, 1, "one button list found")
 T.eq(parsed5.buttonLists[1].first, "select", "list default is select")
+T.eq(parsed5.buttonLists[1].buttons.b, true, "list carries every GB button")
+T.eq(parsed5.dynamicField, "dexNavButton", "polled helper name captured")
 T.eq(next(parsed5.keys), nil, "no raw keys claimed for the dexnav file")
 
 -- a button list without any dynamic poll is not a hotkey
@@ -159,6 +161,8 @@ T.eq(#foundDex, 1, "dexnav file yields one hotkey")
 T.eq(foundDex[1].id, "DexNav|main.lua|gbcfg:select", "gbcfg hotkey id")
 T.eq(foundDex[1].pieces[1].kind, "gb", "gbcfg default piece kind")
 T.eq(foundDex[1].pieces[1].name, "select", "gbcfg default piece name")
+T.eq(foundDex[1].dynamicField, "dexNavButton", "gbcfg carries the save field")
+T.eq(foundDex[1].buttons.a, true, "gbcfg carries the mod's button list")
 
 -- ------------------------------------------------------- describe
 
@@ -274,7 +278,7 @@ local kb = engBy["engine|builtin|speed:up:kb"]
 T.eq(kb.pieces[1].kind, "key", "keyboard speed row is a key")
 T.eq(kb.pieces[1].name, "1", "keyboard speed default is 1")
 T.eq(#ex.engineHotkeys({}), 0, "engine without _cycleSpeed yields no rows")
-T.eq(#ex.engineHotkeys(nil), 0, "headless Game has no built-in speed rows")
+T.eq(#ex.engineHotkeys(nil), 3, "the real engine contributes the built-in rows")
 
 -- engine rows fold into rebinds like any detected hotkey
 local engId = "engine|builtin|speed:up"
@@ -323,15 +327,64 @@ ex.state.hotkeys = {
   ["battle_move_info|main.lua|key:q"] =
     { id = "battle_move_info|main.lua|key:q", modName = "Battle Move Info",
       pieces = { { kind = "key", name = "q" } } },
+  ["long_name|main.lua|key:q"] =
+    { id = "long_name|main.lua|key:q",
+      modName = "Crystal Animated Sprites With Shiny Visuals",
+      pieces = { { kind = "key", name = "q" } } },
 }
 local pcMenu = factory({}, "pc")
-T.eq(#pcMenu.rows, 2, "pc page shows only key rows")
+T.eq(#pcMenu.rows, 3, "pc page shows only key rows")
 T.eq(pcMenu.page, "pc", "pc menu carries its page")
 local padMenu = factory({}, "controller")
 T.eq(#padMenu.rows, 1, "controller page shows only pad rows")
 T.eq(padMenu.rows[1].hotkey.id, "engine|builtin|speed:up",
      "the R2 row lives on the controller page")
+
+-- ------- the name ticker for overflowing mod names
+
+-- a name that fits its window never ticks
+T.eq(pcMenu.rows[1].ticker, nil,
+     "a short label has no ticker (Battle Move Info fits)")
+T.eq(pcMenu.rows[2].ticker, nil,
+     "an explicit short label has no ticker (SPEED UP)")
+
+-- the long mod name gets a ticker clamped to the label window
+local long = pcMenu.rows[3]
+T.neq(long, nil, "the long-name row exists")
+T.neq(long.ticker, nil, "an overflowing name ticks")
+T.eq(long.ticker.x, 16, "ticker starts at the label's x")
+T.eq(long.ticker.w, 136, "ticker clips at the inner right edge (152-16)")
+T.check(long.ticker.overflow > 0, "overflow is the pixels past the window")
+T.eq(long.label, "Crystal Animated Sprites With Shiny Visuals",
+     "the full name is kept on the row")
+T.eq(long.tick, 0, "the tick starts at zero")
+local tickMenu = factory({ input = { wasPressed = function() return false end } },
+                         "pc")
+local tickRow
+for _, row in ipairs(tickMenu.rows) do
+  if row.ticker then tickRow = row break end
+end
+T.neq(tickRow, nil, "the fresh menu still carries the ticker row")
+tickMenu:update(1 / 60)
+T.eq(tickRow.tick, 1 / 60, "update advances the ticker clock")
+
 ex.state.hotkeys = {}
+
+-- pure offset math: hold at each end, 16px/s between
+local to = ex.tickerOffset
+T.eq(to(0, 40), 0, "ticker starts at the label head")
+T.eq(to(0.5, 40), 0, "start hold keeps the label still")
+T.eq(to(1.6 + 0.5, 40), -8, "scrolls out at 16px/s")
+T.check(math.abs(to(1.6 + 40 / 16, 40) + 40) < 1e-9,
+        "fully scrolled to the label tail")
+T.eq(to(1.6 + 2.5 + 0.6, 40), -40, "end hold keeps the tail visible")
+T.check(math.abs(to(1.6 * 2 + 2.5 + 0.25, 40) + 36) < 1e-9,
+        "scrolls back at 16px/s")
+T.eq(to(1.6 * 2 + 2.5 * 2 + 0.1, 40), 0, "the cycle wraps to a new hold")
+T.eq(to(5, 0), 0, "a fitting label never scrolls")
+T.eq(to(5, nil), 0, "nil overflow never scrolls")
+T.eq(to(0, 40), to(1.6 * 2 + 2.5 * 2, 40),
+     "one cycle later the label is back at the head")
 
 -- ---------------------------------------------------- persistence + fold
 
