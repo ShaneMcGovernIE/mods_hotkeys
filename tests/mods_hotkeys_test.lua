@@ -81,6 +81,47 @@ T.eq(#parsed3.gb, 2, "gb combos: wasPressed pair + isDown pair")
 T.eq(parsed3.gb[1][1], "select", "gb combo first piece")
 T.eq(parsed3.gb[1][2], "a", "gb combo second piece")
 
+-- configurable trigger idiom (DexNav): a GB-button list polled through a
+-- dynamic wasPressed(helper(...)) call
+local SRC_DEXNAV = [[
+local DEXNAV_BUTTONS = { "select", "start", "a", "b" }
+local function dexNavButton(game)
+  local saved = game.save.options.dexNavButton
+  for _, btn in ipairs(DEXNAV_BUTTONS) do
+    if btn == saved then return btn end
+  end
+  return "select"
+end
+if Game.input:wasPressed(dexNavButton(Game)) and Game.save.dexNavReg then
+  search()
+end
+]]
+local parsed5 = ex.parseSource(SRC_DEXNAV)
+T.eq(parsed5.dynamic, true, "dynamic wasPressed detected")
+T.eq(#parsed5.buttonLists, 1, "one button list found")
+T.eq(parsed5.buttonLists[1].first, "select", "list default is select")
+T.eq(next(parsed5.keys), nil, "no raw keys claimed for the dexnav file")
+
+-- a button list without any dynamic poll is not a hotkey
+local SRC_LIST_ONLY = [[
+local OPTIONS = { "select", "start" }
+local function show() end
+]]
+local parsed6 = ex.parseSource(SRC_LIST_ONLY)
+T.eq(parsed6.dynamic, false, "list alone is not a trigger")
+
+-- a non-trigger list (random-pick directions) must not be claimed even
+-- when the file has a dynamic poll
+local SRC_DIRS = [[
+local dirs = {"up", "down", "left", "right"}
+local d = dirs[math.random(4)]
+if Game.input:wasPressed(dexNavButton(Game)) then show() end
+]]
+local parsed7 = ex.parseSource(SRC_DIRS)
+T.eq(#parsed7.buttonLists, 0, "dirs array is not a button config")
+T.eq(#ex.detectFromFiles({ ["main.lua"] = SRC_DIRS }, "DexNav", "DexNav"),
+     0, "no hotkey from the dirs array")
+
 -- a `spec.key == key` comparison in a file with no keypressed wrap must
 -- never be claimed as a hotkey
 local SRC_NOOP = [[
@@ -107,6 +148,14 @@ local combo = byId["battle_move_info|speed.lua|combo:back+leftshoulder"]
 T.neq(combo, nil, "held combo hotkey id (sorted pieces)")
 T.eq(#combo.pieces, 2, "combo carries both pads")
 T.eq(#found, 3, "two files -> three hotkeys (singles folded into combo)")
+
+-- dexnav-style configurable trigger joins the detection
+local files2 = { ["main.lua"] = SRC_DEXNAV }
+local foundDex = ex.detectFromFiles(files2, "DexNav", "DexNav")
+T.eq(#foundDex, 1, "dexnav file yields one hotkey")
+T.eq(foundDex[1].id, "DexNav|main.lua|gbcfg:select", "gbcfg hotkey id")
+T.eq(foundDex[1].pieces[1].kind, "gb", "gbcfg default piece kind")
+T.eq(foundDex[1].pieces[1].name, "select", "gbcfg default piece name")
 
 -- ------------------------------------------------------- describe
 

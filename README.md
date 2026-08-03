@@ -4,7 +4,7 @@ Detects the hotkeys other installed mods listen for and lets you rebind them fro
 
 ## What it does
 
-- Scans every enabled mod's Lua sources for the input idioms mods actually use: wrapped `keypressed` key checks (`key == "q"`), wrapped `gamepadpressed` button checks (`button == "leftshoulder"`), held pad-button combos (`held.back and held.leftshoulder`), and GB-button combos (`wasPressed("select") and wasPressed("a")`).
+- Scans every enabled mod's Lua sources for the input idioms mods actually use: wrapped `keypressed` key checks (`key == "q"`), wrapped `gamepadpressed` button checks (`button == "leftshoulder"`), held pad-button combos (`held.back and held.leftshoulder`), GB-button combos (`wasPressed("select") and wasPressed("a")`), and configurable GB-button triggers (DexNav's `DEXNAV_BUTTONS = { "select", "start", "a", "b" }` polled via `wasPressed(dexNavButton(game))`).
 - Each distinct trigger becomes a row in OPTIONS -> MODS HOTKEYS showing the current trigger (e.g. `Q`, `LB+BACK`, `SELECT+A`).
 - A rebinds a row: press your new combo (any mix of keyboard keys and pad buttons), release to set. Escape cancels. SELECT resets one row, START resets everything.
 - Rebinds persist in options.lua, so they survive NEW GAME, CONTINUE and quitting.

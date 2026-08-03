@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.1] - 2026-08-03
+
+- Added: configurable GB-button triggers are now detected — a `*BUTTONS` list (DexNav's `DEXNAV_BUTTONS = { "select", "start", "a", "b" }`) polled through a dynamic `wasPressed(helper(game))` call becomes a rebindable hotkey (default = the list's first button).
+- Filtered random-pick arrays like `dirs = {"up", "down", "left", "right"}` out of that detection.
+
 ## [0.1.0] - 2026-08-03
 
 - OPTIONS -> MODS HOTKEYS submenu listing hotkeys detected from other installed mods (wrapped keypressed keys, gamepadpressed buttons, held pad combos, GB-button combos).

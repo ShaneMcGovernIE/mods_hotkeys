@@ -62,8 +62,45 @@ end
 -- Scan one mod source file for hotkey idioms.  The key/button literal
 -- patterns are gated on the file mentioning keypressed/gamepadpressed so
 -- unrelated `spec.key == key` comparisons are never claimed as hotkeys.
+local GB_BUTTONS = {
+  select = true, start = true, a = true, b = true,
+  up = true, down = true, left = true, right = true,
+}
+
+-- Table literals that read as GB-button trigger configs, the
+-- configurable-trigger idiom (DexNav: DEXNAV_BUTTONS = { "select",
+-- "start", "a", "b" } then wasPressed(dexNavButton(game))).  The
+-- assignment name must read as a button config -- a random-pick array
+-- like `dirs = {"up", "down", "left", "right"}` is not a trigger -- and
+-- at least two literals must be Game Boy buttons.  The first is the
+-- default trigger.
+local function buttonLists(text)
+  local lists = {}
+  for name, list in text:gmatch("([%w_]+)%s*=%s*{([^{}]*)}") do
+    if name:lower():find("button") then
+      local count, first = 0, nil
+      for lit in list:gmatch('["\'](%w+)["\']') do
+        if GB_BUTTONS[lit] then
+          count = count + 1
+          if not first then first = lit end
+        end
+      end
+      if count >= 2 then lists[#lists + 1] = { first = first } end
+    end
+  end
+  return lists
+end
+
+-- wasPressed/isDown called with a non-literal argument (a helper that
+-- resolves the button at runtime, the configurable-trigger idiom)
+local function hasDynamicPoll(text)
+  return text:find('wasPressed%(%s*[^"\']') ~= nil
+      or text:find('isDown%(%s*[^"\']') ~= nil
+end
+
 local function parseSource(text)
-  local out = { keys = {}, pads = {}, held = {}, gb = {} }
+  local out = { keys = {}, pads = {}, held = {}, gb = {},
+                dynamic = false, buttonLists = {} }
   if type(text) ~= "string" then return out end
   if text:find("keypressed") then
     for lit in text:gmatch('key%s*[=~]=%s*["\'](%w+)["\']') do
@@ -86,6 +123,13 @@ local function parseSource(text)
   for a, b in text:gmatch('isDown%(%s*["\'](%w+)["\']%s*%)'
     .. '%s*and%s*[%w_.:]*isDown%(%s*["\'](%w+)["\']%s*%)') do
     out.gb[#out.gb + 1] = { a, b }
+  end
+  if hasDynamicPoll(text) then
+    local lists = buttonLists(text)
+    if #lists > 0 then
+      out.dynamic = true
+      out.buttonLists = lists
+    end
   end
   return out
 end
@@ -134,6 +178,17 @@ local function detectFromFiles(files, modId, modName)
         pieces = { { kind = "gb", name = pair[1] },
                    { kind = "gb", name = pair[2] } },
       }
+    end
+    -- configurable triggers: a GB-button list polled through a dynamic
+    -- wasPressed/isDown; the list's first button is the default trigger
+    if parsed.dynamic then
+      for _, list in ipairs(parsed.buttonLists) do
+        out[#out + 1] = {
+          id = ("%s|%s|gbcfg:%s"):format(modId, rel, list.first),
+          modId = modId, modName = modName,
+          pieces = { { kind = "gb", name = list.first } },
+        }
+      end
     end
   end
   return out
