@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.10] - 2026-08-05
+
+- Fixed: B on a hotkey submenu no longer closes the OPTIONS menu beneath it
+  too. `exit()` was popping the stack itself, but `StateStack:pop` already
+  runs `exit()` as cleanup, so the submenu popped twice — both screens
+  closed and two beeps played. `exit()` is now cleanup-only.
+
+- Fixed: `joyN` (raw analog-stick) buttons can no longer be bound. The rebind
+  tick has no joystick channel and emission has no way to hold a raw stick
+  button, so such a combo could never fire. Capturing one now flashes
+  NOT BINDABLE like the reserved keys.
+
+- Fixed: ending a capture clears all live combo holds and virtual holds, so
+  a partial hold before the capture or a release swallowed mid-capture can
+  no longer fire a stale combo the instant the capture box closes.
+
+- Changed: the seven source-detection branches in `detectFromFiles` were
+  deduplicated behind a `record()` builder (~50 lines removed).
+
 ## [0.1.9] - 2026-08-04
 
 - Added: Dex Radar's overworld hotkey (default `R`, configurable through its own OPTIONS -> HOTKEY KEY) is now detected and rebindable. The scanner understands the direct keyboard-poll idiom (`love.keyboard.isDown(key)` with an edge latch, the key read from `mod.options:get`), which also covers any other mod that polls the keyboard directly. Rebound triggers hold the polled key virtually for the combo's duration, so the source mod's own poll sees the press exactly as if the key had been pressed.

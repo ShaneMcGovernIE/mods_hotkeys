@@ -200,6 +200,59 @@ menu:resetRow(row)
 T.eq(ex.getRebinds()[qId], nil, "reset row drops the rebind")
 T.eq(ex.currentTrigger(qId), "Q", "row falls back to the default")
 
+-- ------------------------------------------------------- exit pops once
+
+-- StateStack:pop calls state:exit() as a cleanup hook, so the menu's own
+-- exit must never pop the stack -- a pop inside exit re-enters exit and
+-- pops the OPTIONS menu underneath.  B must close the submenu exactly once.
+local exitMenu = screen.new(Game, "pc")
+exitMenu.game = setmetatable({}, { __index = Game })
+exitMenu.game.data = nil
+exitMenu.game.input = { wasPressed = function(_, btn) return btn == "b" end }
+local stackStates = { { id = "OptionsMenu" }, exitMenu }
+exitMenu.game.stack = {
+  pop = function()
+    local s = table.remove(stackStates)
+    if s and s.exit then s:exit() end
+    return s
+  end,
+}
+exitMenu:update(0)
+T.eq(#stackStates, 1, "B closes the submenu with a single pop")
+T.eq(stackStates[1].id, "OptionsMenu", "the OPTIONS menu survives the pop")
+
+-- -------------------------------------------------------- joyN capture
+
+-- raw-stick buttons arrive on the joystick path, which the rebind tick
+-- never wraps and emission has no channel for: capturing one would build
+-- a combo that can never fire, so it is rejected like a reserved key
+menu:beginCapture(row)
+menu:captureJoy(1)
+T.eq(#menu.pending, 0, "joyN piece is rejected, not collected")
+T.neq(menu.reject, nil, "joyN rejection flashes the not-bindable message")
+menu:endCapture()
+
+-- ------------------------------------------------------ stale-latch reset
+
+-- a capture session suspends the rebind tick; ending it must clear every
+-- live combo and virtual hold so a pre-capture partial press can't
+-- false-fire the instant the capture box closes
+ex.state.hotkeys[qId] = { id = qId, modName = "Battle Move Info",
+                          pieces = { { kind = "key", name = "q" } } }
+ex.setRebinds({ [qId] = { pieces = { { kind = "key", name = "f6" } } } })
+ex.applyRebinds()
+local staleRb = ex.state.rebinds[qId]
+staleRb.combo.held["key:f6"] = true
+staleRb.combo.fired = true
+ex.state.virtual["r"] = true
+menu:beginCapture(row)
+menu:endCapture()
+T.eq(next(staleRb.combo.held), nil, "capture end clears stale combo holds")
+T.eq(staleRb.combo.fired, false, "capture end clears the fired latch")
+T.eq(ex.state.virtual["r"], nil, "capture end clears virtual key holds")
+ex.setRebinds({})
+ex.state.hotkeys = {}
+
 -- ---------------------------------------------------- gbcfg (DexNav) path
 
 -- a configurable-trigger mod in the loader: DexNav ships a GB-button
