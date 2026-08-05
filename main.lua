@@ -231,14 +231,19 @@ end
 -- persisted rebind map across boots.
 local function detectFromFiles(files, modId, modName)
   local out = {}
+  local function record(rel, kind, pieces, extra)
+    local r = { id = ("%s|%s|%s"):format(modId, rel, kind),
+                modId = modId, modName = modName, pieces = pieces }
+    if extra then
+      for k, v in pairs(extra) do r[k] = v end
+    end
+    return r
+  end
   for rel, text in pairs(files) do
     local parsed = parseSource(text)
     for lit in pairs(parsed.keys) do
-      out[#out + 1] = {
-        id = ("%s|%s|key:%s"):format(modId, rel, lit),
-        modId = modId, modName = modName,
-        pieces = { { kind = "key", name = lit } },
-      }
+      out[#out + 1] = record(rel, "key:" .. lit,
+        { { kind = "key", name = lit } })
     end
     local heldList = {}
     for lit in pairs(parsed.held) do heldList[#heldList + 1] = lit end
@@ -248,57 +253,38 @@ local function detectFromFiles(files, modId, modName)
       for _, lit in ipairs(heldList) do
         pieces[#pieces + 1] = { kind = "pad", name = lit }
       end
-      out[#out + 1] = {
-        id = ("%s|%s|combo:%s"):format(modId, rel,
-          table.concat(heldList, "+")),
-        modId = modId, modName = modName, pieces = pieces,
-      }
+      out[#out + 1] = record(rel, "combo:" .. table.concat(heldList, "+"),
+        pieces)
     else
       for lit in pairs(parsed.pads) do
-        out[#out + 1] = {
-          id = ("%s|%s|pad:%s"):format(modId, rel, lit),
-          modId = modId, modName = modName,
-          pieces = { { kind = "pad", name = lit } },
-        }
+        out[#out + 1] = record(rel, "pad:" .. lit,
+          { { kind = "pad", name = lit } })
       end
     end
     for _, pair in ipairs(parsed.gb) do
-      out[#out + 1] = {
-        id = ("%s|%s|gb:%s+%s"):format(modId, rel, pair[1], pair[2]),
-        modId = modId, modName = modName,
-        pieces = { { kind = "gb", name = pair[1] },
-                   { kind = "gb", name = pair[2] } },
-      }
+      out[#out + 1] = record(rel, ("gb:%s+%s"):format(pair[1], pair[2]),
+        { { kind = "gb", name = pair[1] },
+          { kind = "gb", name = pair[2] } })
     end
     -- single-button state/queue polls (Quick Select style): one hotkey
     -- per GB button the file reads straight off Input
     for lit in pairs(parsed.gbSingles) do
-      out[#out + 1] = {
-        id = ("%s|%s|gb:%s"):format(modId, rel, lit),
-        modId = modId, modName = modName,
-        pieces = { { kind = "gb", name = lit } },
-      }
+      out[#out + 1] = record(rel, "gb:" .. lit,
+        { { kind = "gb", name = lit } })
     end
     -- keyboard polls (Dex Radar style): literal polls are plain key
     -- hotkeys marked poll -- the rebind holds the key virtually, since
     -- the source mod reads love.keyboard.isDown, not the input chain;
     -- the configurable poll carries its options field + schema default
     for lit in pairs(parsed.pollKeys) do
-      out[#out + 1] = {
-        id = ("%s|%s|keypoll:%s"):format(modId, rel, lit),
-        modId = modId, modName = modName,
-        pieces = { { kind = "key", name = lit } },
-        poll = true,
-      }
+      out[#out + 1] = record(rel, "keypoll:" .. lit,
+        { { kind = "key", name = lit } }, { poll = true })
     end
     if parsed.pollField and parsed.pollDefault then
-      out[#out + 1] = {
-        id = ("%s|%s|keypoll:%s"):format(modId, rel, parsed.pollField),
-        modId = modId, modName = modName,
-        pieces = { { kind = "key", name = parsed.pollDefault } },
-        poll = true, pollField = parsed.pollField,
-        pollDefault = parsed.pollDefault,
-      }
+      out[#out + 1] = record(rel, "keypoll:" .. parsed.pollField,
+        { { kind = "key", name = parsed.pollDefault } },
+        { poll = true, pollField = parsed.pollField,
+          pollDefault = parsed.pollDefault })
     end
     -- configurable triggers: a GB-button list polled through a dynamic
     -- wasPressed/isDown; the list's first button is the default trigger,
@@ -306,13 +292,9 @@ local function detectFromFiles(files, modId, modName)
     -- current choice (save.options.<field>) at emission time
     if parsed.dynamic then
       for _, list in ipairs(parsed.buttonLists) do
-        out[#out + 1] = {
-          id = ("%s|%s|gbcfg:%s"):format(modId, rel, list.first),
-          modId = modId, modName = modName,
-          pieces = { { kind = "gb", name = list.first } },
-          dynamicField = parsed.dynamicField,
-          buttons = list.buttons,
-        }
+        out[#out + 1] = record(rel, "gbcfg:" .. list.first,
+          { { kind = "gb", name = list.first } },
+          { dynamicField = parsed.dynamicField, buttons = list.buttons })
       end
     end
   end
@@ -606,6 +588,20 @@ local function applyRebinds()
   state.rebinds = live
 end
 
+-- A capture session suspends the rebind tick, so press/release edges that
+-- land while it is open never reach the combo machines.  Clearing every
+-- live combo on the way out stops two stale-latch bugs: a piece held
+-- before the capture (its release swallowed by the suspended tick) can no
+-- longer make the next partial press false-fire, and a poll hotkey's
+-- virtual hold released during the capture can no longer stay stuck down.
+local function resetRebindCombos()
+  for _, rb in pairs(state.rebinds) do
+    rb.combo.held = {}
+    rb.combo.fired = false
+  end
+  state.virtual = {}
+end
+
 -- --------------------------------------------------------- the screen
 
 -- Keys the engine consumes before Input (Game:keypressed) are not
@@ -620,6 +616,10 @@ local RESERVED_KEYS = {
 
 local function isBindable(kind, name)
   if kind == "key" then return RESERVED_KEYS[name] == nil end
+  -- raw-stick buttons ("joyN") arrive on the joystick path, which the
+  -- rebind tick never wraps and emission has no channel for -- a combo
+  -- holding one could never fire, so it is rejected like a reserved key
+  if name and name:match("^joy%d+$") then return false end
   return true -- pad buttons never reach Game:keypressed
 end
 
@@ -633,10 +633,13 @@ function ModsHotkeysMenu:sgbPalettes(game)
 end
 
 function ModsHotkeysMenu:exit()
+  -- StateStack:pop calls state:exit() as a cleanup hook, so exit must never
+  -- pop the stack itself: a pop here would re-enter exit() through the
+  -- stack and pop the state underneath (the OPTIONS menu).  The handlers
+  -- pop first; this only plays the sound and runs the caller's onCancel.
   if self.game.data then
     require("src.core.Sound").play(self.game.data, "Press_AB")
   end
-  self.game.stack:pop()
   if self.onCancel then self.onCancel() end
 end
 
@@ -664,10 +667,10 @@ function ModsHotkeysMenu:update(dt)
     if row then
       self:beginCapture(row)
     else -- the CANCEL row
-      self:exit()
+      self.game.stack:pop() -- StateStack calls exit() (sound + onCancel)
     end
   elseif input:wasPressed("b") then
-    self:exit()
+    self.game.stack:pop() -- StateStack calls exit() (sound + onCancel)
   end
   self.scroll = OptionRows.clampScroll(self.index, self.scroll or 0,
                                        #rows, cancelRow)
@@ -730,6 +733,7 @@ function ModsHotkeysMenu:endCapture()
   self.heldCount = nil
   self.reject = nil
   state.capturing = false
+  resetRebindCombos()
   self.onKeyPressed = nil
   self.onGamepadPressed = nil
   self.onJoystickPressed = nil
@@ -779,7 +783,13 @@ function ModsHotkeysMenu:capturePad(button)
 end
 
 function ModsHotkeysMenu:captureJoy(button)
-  self:addPiece("pad", "joy" .. button)
+  local name = "joy" .. button
+  if not isBindable("pad", name) then
+    self.reject = { key = name:upper(),
+                    ["until"] = love.timer.getTime() + 1.2 }
+    return
+  end
+  self:addPiece("pad", name)
 end
 
 function ModsHotkeysMenu:captureKeyRelease(key)
@@ -1071,6 +1081,7 @@ return function(mod)
     resolveGBConfig = resolveGBConfig,
     originalPieces = originalPieces,
     resolvePollKey = resolvePollKey,
+    resetRebindCombos = resetRebindCombos,
     tickerOffset = tickerOffset,
     state = state,
   }

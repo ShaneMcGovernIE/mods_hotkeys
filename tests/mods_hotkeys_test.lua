@@ -376,6 +376,9 @@ T.eq(ex.isBindable("key", "2"), false, "2 (colour cycle) is not bindable")
 T.eq(ex.isBindable("key", "f10"), false, "F10 (mod manager) is not bindable")
 T.eq(ex.isBindable("key", "escape"), false, "Escape (capture cancel) is not bindable")
 T.eq(ex.isBindable("pad", "leftshoulder"), true, "pad buttons are bindable")
+T.eq(ex.isBindable("pad", "joy1"), false,
+     "raw-stick joyN buttons are not bindable (no re-emit channel)")
+T.eq(ex.isBindable("pad", "back"), true, "named pad buttons stay bindable")
 
 -- ---------------------------------------------------- scanMods (fake fs)
 local fakeFs = {
@@ -570,5 +573,23 @@ ex.setRebinds({ [id] = { pieces = {} } })
 ex.applyRebinds()
 T.eq(ex.currentTrigger(id), "Q", "empty rebind falls back to the default")
 T.eq(ex.state.rebinds[id], nil, "no live combo for an empty rebind")
+
+-- stale-latch guard: ending a capture session resets every live combo and
+-- virtual hold, so a partial hold from before the capture (whose release
+-- the suspended tick swallowed) can never false-fire afterwards
+ex.state.hotkeys[id] = { id = id, modName = "Battle Move Info",
+                         pieces = { { kind = "key", name = "q" } } }
+ex.setRebinds({ [id] = { pieces = { { kind = "key", name = "f6" } } } })
+ex.applyRebinds()
+local latch = ex.state.rebinds[id]
+latch.combo.held["key:f6"] = true
+latch.combo.fired = true
+ex.state.virtual["r"] = true
+ex.resetRebindCombos()
+T.eq(next(latch.combo.held), nil, "capture reset clears stale combo holds")
+T.eq(latch.combo.fired, false, "capture reset clears the fired latch")
+T.eq(ex.state.virtual["r"], nil, "capture reset clears virtual key holds")
+ex.setRebinds({})
+ex.state.hotkeys = {}
 
 T.finish("mods_hotkeys")
